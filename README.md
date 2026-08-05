@@ -5,7 +5,7 @@ Web Assurance Agent is a read-only service that turns Uptime Kuma website events
 Uptime Kuma remains the fast deterministic outage detector. This service receives an authenticated event, confirms failures through tightly controlled HTTPS probes, classifies the result, suppresses duplicate reports, and either publishes a structured Discord embed or logs it in dry-run mode.
 
 > [!IMPORTANT]
-> The current `0.1.0` implementation provides HTTP incident confirmation and reporting. Browser-rendered checks, WordPress/plugin assertions, synthetic journeys, and visual regression are planned in [ROADMAP.md](ROADMAP.md), not yet implemented.
+> The `0.2.0` development branch provides HTTP incident confirmation and reporting plus a typed, deterministic browser-evidence evaluator. Browser execution, WordPress/plugin assertions, synthetic journeys, and visual regression remain planned in [ROADMAP.md](ROADMAP.md) and are not yet implemented.
 
 ## Why this exists
 
@@ -39,6 +39,10 @@ The roadmap extends this foundation toward proving that a site rendered and beha
     - `recovered`
 11. Serialize events per monitor, reject stale transitions, and suppress repeated classifications.
 12. Publish a structured Discord embed or log the payload in dry-run mode.
+13. Evaluate typed browser evidence deterministically without requiring a browser runtime.
+14. Load strict declarative site/page manifests with exact HTTPS allowlists, stable IDs,
+    viewport profiles, assertions, resource policies, masks, and disabled-by-default safe
+    interactions.
 
 ## Safety model
 

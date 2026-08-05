@@ -59,7 +59,7 @@ These constraints apply to every milestone:
 
 ### 1.1 Browser evidence domain model
 
-**Status:** next
+**Status:** complete in `0.2.0`
 
 Create browser-check types that are independent from Playwright so evaluation and reporting remain fast and deterministic in unit tests.
 
@@ -92,7 +92,13 @@ TDD order:
 6. Critical resource failure fails.
 7. Non-critical ignored resource remains informational.
 
+Additional completed evaluator coverage includes required text, selector visibility,
+console errors, unsuccessful document responses, and browser timeouts. The model remains
+independent from Playwright; browser execution begins in milestone 1.3.
+
 ### 1.2 Declarative site manifests
+
+**Status:** complete in `0.2.0`
 
 Create:
 
