@@ -1,0 +1,21 @@
+services:
+  web-assurance-agent:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      TRIAGE_WEBHOOK_TOKEN: "${TRIAGE_WEBHOOK_TOKEN:?Set TRIAGE_WEBHOOK_TOKEN}"
+      TRIAGE_ALLOWED_HOSTS: "${TRIAGE_ALLOWED_HOSTS:?Set TRIAGE_ALLOWED_HOSTS}"
+      TRIAGE_DISCORD_WEBHOOK_URL: "${TRIAGE_DISCORD_WEBHOOK_URL:-}"
+      TRIAGE_CONFIRMATION_ATTEMPTS: "${TRIAGE_CONFIRMATION_ATTEMPTS:-2}"
+      TRIAGE_CONFIRMATION_DELAY_SECONDS: "${TRIAGE_CONFIRMATION_DELAY_SECONDS:-5}"
+      TRIAGE_REQUEST_TIMEOUT_SECONDS: "${TRIAGE_REQUEST_TIMEOUT_SECONDS:-15}"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
