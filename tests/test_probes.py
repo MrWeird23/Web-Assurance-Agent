@@ -14,7 +14,7 @@ async def test_probe_records_success_and_cloudflare_evidence() -> None:
         assert request.url.host == "104.21.10.20"
         assert request.headers["host"] == "monitor.example.com"
         assert request.extensions["sni_hostname"] == "monitor.example.com"
-        assert request.headers["user-agent"].startswith("Web-Assurance-Agent/")
+        assert request.headers["user-agent"] == "Web-Assurance-Agent/0.2.0"
         return httpx.Response(
             200,
             headers={"server": "cloudflare", "cf-ray": "abc123-LIS"},
@@ -97,6 +97,28 @@ async def test_probe_rejects_disallowed_host_before_dns_resolution() -> None:
     async with httpx.AsyncClient(transport=transport) as client:
         result = await probe_url(
             "https://internal.example/",
+            allowed_hosts={"example.com"},
+            client=client,
+            resolver=resolve,
+        )
+
+    assert resolver_called is False
+    assert result.ok is False
+    assert result.error == "Unsafe target"
+
+
+async def test_probe_rejects_unicode_control_before_dns_resolution() -> None:
+    resolver_called = False
+
+    async def resolve(_host: str) -> set[str]:
+        nonlocal resolver_called
+        resolver_called = True
+        return {"104.21.10.20"}
+
+    transport = httpx.MockTransport(lambda _: httpx.Response(200))
+    async with httpx.AsyncClient(transport=transport) as client:
+        result = await probe_url(
+            "https://example.com/status\u0085secret",
             allowed_hosts={"example.com"},
             client=client,
             resolver=resolve,

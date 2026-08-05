@@ -1,3 +1,5 @@
+import pytest
+
 from triage_agent.classification import IncidentKind, classify_incident
 from triage_agent.events import EventState, KumaEvent
 from triage_agent.probes import ProbeResult
@@ -29,6 +31,39 @@ def test_classifies_kuma_403_as_monitor_block_when_confirmation_succeeds() -> No
     assert incident.confirmed is False
     assert "403" in incident.summary
     assert incident.recommendation == "Review WAF or bot-protection rules for the Kuma probe."
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        "1403 ms timeout",
+        "timeout contacting /403-status endpoint",
+        "HTTP 503 mentions expected HTTP 403",
+    ],
+)
+def test_does_not_treat_unrelated_403_substrings_as_http_status(error: str) -> None:
+    event = KumaEvent(
+        monitor_id=10,
+        monitor_name="Example Site",
+        url="https://monitor.example.com/",
+        state=EventState.DOWN,
+        error=error,
+        observed_at="2026-08-04 13:14:37",
+    )
+    probes = [
+        ProbeResult(
+            ok=True,
+            status_code=200,
+            latency_ms=321,
+            final_url="https://monitor.example.com/",
+            error=None,
+            server="cloudflare",
+        )
+    ]
+
+    incident = classify_incident(event, probes)
+
+    assert incident.kind is IncidentKind.TRANSIENT_FAILURE
 
 
 def test_confirms_outage_when_all_confirmation_attempts_fail() -> None:

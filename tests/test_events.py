@@ -27,7 +27,7 @@ def test_parses_kuma_down_event() -> None:
     assert event.url == "https://monitor.example.com/"
     assert event.state is EventState.DOWN
     assert event.error == "Request failed with status code 403"
-    assert event.observed_at == "2026-08-04 13:14:37"
+    assert event.observed_at == "2026-08-04T13:14:37+00:00"
 
 
 def test_rejects_payload_without_required_monitor_fields() -> None:
@@ -77,5 +77,51 @@ def test_rejects_invalid_observation_time() -> None:
             {
                 "heartbeat": {"status": 0, "time": "not-a-time"},
                 "monitor": {"id": 10, "name": "Site", "url": "https://example.com/"},
+            }
+        )
+
+
+def test_normalizes_observation_time_to_utc() -> None:
+    event = parse_kuma_event(
+        {
+            "heartbeat": {"status": 0, "time": " 2026-08-04T13:14:37+02:00 "},
+            "monitor": {"id": 10, "name": "Site", "url": "https://example.com/"},
+        }
+    )
+
+    assert event.observed_at == "2026-08-04T11:14:37+00:00"
+
+
+def test_rejects_overlong_observation_time() -> None:
+    overlong_time = "2026-08-04T13:14:37." + ("1" * 100)
+
+    with pytest.raises(ValueError, match="Invalid Uptime Kuma payload"):
+        parse_kuma_event(
+            {
+                "heartbeat": {"status": 0, "time": overlong_time},
+                "monitor": {
+                    "id": 10,
+                    "name": "Site",
+                    "url": "https://example.com/",
+                },
+            }
+        )
+
+
+@pytest.mark.parametrize("message", [False, 0, [], {}])
+def test_rejects_falsy_non_string_heartbeat_messages(message: object) -> None:
+    with pytest.raises(ValueError, match="Invalid Uptime Kuma payload"):
+        parse_kuma_event(
+            {
+                "heartbeat": {
+                    "status": 0,
+                    "time": "2026-08-04 13:14:37",
+                    "msg": message,
+                },
+                "monitor": {
+                    "id": 10,
+                    "name": "Site",
+                    "url": "https://example.com/",
+                },
             }
         )

@@ -6,6 +6,7 @@ from typing import Any, Protocol
 
 from fastapi import FastAPI, HTTPException, Request
 
+from triage_agent import __version__
 from triage_agent.discord import DiscordPublishError
 
 MAX_WEBHOOK_BODY_BYTES = 65_536
@@ -23,7 +24,7 @@ def create_app(
 ) -> FastAPI:
     app = FastAPI(
         title="Web Assurance Agent",
-        version="0.1.0",
+        version=__version__,
         lifespan=lifespan,
     )
 

@@ -24,7 +24,7 @@ class KumaEvent:
 
 
 def parse_observed_at(value: object) -> datetime:
-    if not isinstance(value, str) or not value.strip():
+    if not isinstance(value, str) or not value.strip() or len(value) > 64:
         raise ValueError("Invalid Uptime Kuma observation time")
     try:
         observed_at = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
@@ -46,8 +46,8 @@ def parse_kuma_event(payload: dict[str, Any]) -> KumaEvent:
         monitor_name = monitor["name"]
         url = monitor["url"]
         observed_at = heartbeat["time"]
-        error = heartbeat.get("msg") or ""
-        parse_observed_at(observed_at)
+        error = heartbeat.get("msg", "")
+        normalized_observed_at = parse_observed_at(observed_at).isoformat()
         if (
             not isinstance(status, int)
             or isinstance(status, bool)
@@ -74,5 +74,5 @@ def parse_kuma_event(payload: dict[str, Any]) -> KumaEvent:
         url=url.strip(),
         state=state,
         error=error,
-        observed_at=observed_at,
+        observed_at=normalized_observed_at,
     )

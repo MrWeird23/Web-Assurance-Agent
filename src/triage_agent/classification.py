@@ -1,8 +1,15 @@
+import re
 from dataclasses import dataclass
 from enum import StrEnum
 
 from triage_agent.events import EventState, KumaEvent
 from triage_agent.probes import ProbeResult
+
+_HTTP_STATUS_PATTERN = re.compile(
+    r"(?:\b(?:http(?:\s+status)?|status(?:\s+code)?)\s*[:=-]?\s*(\d{3})\b|"
+    r"\b(403)\s+forbidden\b)",
+    re.IGNORECASE,
+)
 
 
 class IncidentKind(StrEnum):
@@ -20,6 +27,13 @@ class Incident:
     recommendation: str
 
 
+def _reported_http_status(error: str) -> int | None:
+    match = _HTTP_STATUS_PATTERN.search(error)
+    if match is None:
+        return None
+    return int(match.group(1) or match.group(2))
+
+
 def classify_incident(event: KumaEvent, probes: list[ProbeResult]) -> Incident:
     if event.state is EventState.UP:
         return Incident(
@@ -28,7 +42,7 @@ def classify_incident(event: KumaEvent, probes: list[ProbeResult]) -> Incident:
             summary=f"{event.monitor_name} is responding normally again.",
             recommendation="No intervention is required.",
         )
-    if "403" in event.error and any(probe.ok for probe in probes):
+    if _reported_http_status(event.error) == 403 and any(probe.ok for probe in probes):
         return Incident(
             kind=IncidentKind.MONITOR_BLOCKED,
             confirmed=False,
