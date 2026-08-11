@@ -5,7 +5,11 @@ Web Assurance Agent is a read-only service that turns Uptime Kuma website events
 Uptime Kuma remains the fast deterministic outage detector. This service receives an authenticated event, confirms failures through tightly controlled HTTPS probes, classifies the result, suppresses duplicate reports, and either publishes a structured Discord embed or logs it in dry-run mode.
 
 > [!IMPORTANT]
-> The `0.2.0` development branch provides HTTP incident confirmation and reporting plus a typed, deterministic browser-evidence evaluator. Browser execution, WordPress/plugin assertions, synthetic journeys, and visual regression remain planned in [ROADMAP.md](ROADMAP.md) and are not yet implemented.
+> The `0.2.0` development branch provides HTTP incident confirmation and reporting,
+> strict declarative page manifests, and an isolated Playwright/Chromium runner with
+> deterministic browser evidence. No API or scheduler invokes browser checks yet;
+> WordPress/plugin assertions, synthetic journeys, and visual regression remain planned in
+> [ROADMAP.md](ROADMAP.md).
 
 ## Why this exists
 
@@ -43,6 +47,12 @@ The roadmap extends this foundation toward proving that a site rendered and beha
 14. Load strict declarative site/page manifests with exact HTTPS allowlists, stable IDs,
     viewport profiles, assertions, resource policies, masks, and disabled-by-default safe
     interactions.
+15. Run isolated Playwright/Chromium checks through validated, address-pinned HTTPS fetching
+    with browser DNS disabled, single-use host/SNI-isolated transports, bounded redirects and
+    resources, read-only routing, deterministic context settings, blocked WebRTC/WebSocket escape
+    paths, fixed typed runtime-error markers, and optional masked viewport screenshot artifacts.
+    Cross-origin routed redirects fail closed rather than being fulfilled against the requesting
+    origin.
 
 ## Safety model
 
@@ -244,7 +254,10 @@ docker build -t web-assurance-agent:local .
 - Incident state is in memory and resets when the process restarts.
 - One worker is required until state becomes durable.
 - Confirmation originates from one deployment location.
-- Browser rendering, WordPress/plugin checks, synthetic interactions, screenshot comparison, and baseline management are not yet implemented.
+- The isolated browser runner is not yet wired to an API endpoint or scheduler.
+- Screenshot capture requires an explicit artifact directory; production retention policy,
+  screenshot comparison, and human-approved baseline management are not yet implemented.
+- WordPress/plugin checks and synthetic interactions are not yet implemented.
 - No automatic remediation exists or is planned for the initial milestones.
 
 See [ROADMAP.md](ROADMAP.md) for the controlled path to application-level assurance.
