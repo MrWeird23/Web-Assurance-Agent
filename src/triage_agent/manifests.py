@@ -125,12 +125,17 @@ class SiteManifestFile(StrictManifestModel):
 class ManifestRegistry:
     manifest: SiteManifestFile
     _pages: Mapping[str, PageManifest]
+    _allowed_hosts: Mapping[str, frozenset[str]]
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "_pages", MappingProxyType(dict(self._pages)))
+        object.__setattr__(self, "_allowed_hosts", MappingProxyType(dict(self._allowed_hosts)))
 
     def page(self, page_id: str) -> PageManifest:
         return self._pages[page_id]
+
+    def allowed_hosts(self, page_id: str) -> frozenset[str]:
+        return self._allowed_hosts[page_id]
 
 
 def load_site_manifest(path: Path) -> ManifestRegistry:
@@ -198,4 +203,7 @@ def parse_site_manifest(text: str) -> ManifestRegistry:
         raise ValueError("Invalid site manifest: duplicate page ID")
 
     pages = {page.id: page for page in page_list}
-    return ManifestRegistry(manifest=manifest, _pages=pages)
+    page_allowed_hosts = {
+        page.id: frozenset(site.allowed_hosts) for site in manifest.sites for page in site.pages
+    }
+    return ManifestRegistry(manifest=manifest, _pages=pages, _allowed_hosts=page_allowed_hosts)

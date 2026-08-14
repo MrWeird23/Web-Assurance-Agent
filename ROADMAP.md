@@ -159,12 +159,12 @@ websites. It disables browser DNS and service workers, blocks WebRTC, WebSockets
 pins every HTTP connection to a validated public address while preserving Host and TLS SNI,
 uses a single-use transport per pinned request to isolate host/SNI identities, revalidates bounded
 redirects, captures typed DOM/runtime/resource evidence without raw runtime error text, and
-supports opt-in masked viewport screenshot artifacts. API and scheduler integration remain in
-later sections.
+supports opt-in masked viewport screenshot artifacts. Scheduler integration remains in later
+sections.
 
 ### 1.4 Safe manual check endpoint
 
-Proposed API:
+Implemented API:
 
 `POST /checks/pages/{page_id}`
 

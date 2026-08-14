@@ -7,9 +7,9 @@ Uptime Kuma remains the fast deterministic outage detector. This service receive
 > [!IMPORTANT]
 > The `0.2.0` development branch provides HTTP incident confirmation and reporting,
 > strict declarative page manifests, and an isolated Playwright/Chromium runner with
-> deterministic browser evidence. No API or scheduler invokes browser checks yet;
-> WordPress/plugin assertions, synthetic journeys, and visual regression remain planned in
-> [ROADMAP.md](ROADMAP.md).
+> deterministic browser evidence. An authenticated manual endpoint can invoke checks for
+> manifest-defined pages; scheduling, WordPress/plugin assertions, synthetic journeys, and
+> visual regression remain planned in [ROADMAP.md](ROADMAP.md).
 
 ## Why this exists
 
@@ -53,6 +53,8 @@ The roadmap extends this foundation toward proving that a site rendered and beha
     paths, fixed typed runtime-error markers, and optional masked viewport screenshot artifacts.
     Cross-origin routed redirects fail closed rather than being fulfilled against the requesting
     origin.
+16. Invoke a manifest-defined page manually through `POST /checks/pages/{page_id}` using the
+    existing `X-Triage-Token` authentication boundary. Arbitrary request URLs are not accepted.
 
 ## Safety model
 
@@ -193,6 +195,7 @@ Without `TRIAGE_DISCORD_WEBHOOK_URL`, the rendered Discord payload appears only 
 
 ```bash
 cp .env.example .env
+cp config/sites.example.yaml config/sites.yaml
 # Replace every placeholder before continuing.
 
 docker compose config
@@ -214,7 +217,15 @@ A production deployment should place the service behind an approved TLS reverse 
 | `TRIAGE_CONFIRMATION_ATTEMPTS` | No | `2` | Confirmation attempts, from 1 to 5 |
 | `TRIAGE_CONFIRMATION_DELAY_SECONDS` | No | `5` | Delay between attempts, from 0 to 60 seconds |
 | `TRIAGE_REQUEST_TIMEOUT_SECONDS` | No | `15` | Per-request timeout, from 1 to 60 seconds |
+| `TRIAGE_SITE_MANIFEST_PATH` | No | empty | Enables manifest-backed manual browser checks when set |
+| `TRIAGE_BROWSER_ARTIFACT_DIRECTORY` | No | empty | Directory for optional browser screenshot artifacts |
+| `TRIAGE_MANUAL_CHECK_CONCURRENCY` | No | `1` | Maximum simultaneous manual browser checks per service process, from 1 to 4; excess requests receive HTTP 429 |
 | `LOG_LEVEL` | No | `INFO` | Runtime log level |
+
+For Compose deployments, copy `config/sites.example.yaml` to `config/sites.yaml` and replace the
+example host, page IDs, assertions, and viewports before starting the service. Compose mounts that
+file read-only and stores transient screenshot artifacts under the container's bounded `/tmp`
+filesystem.
 
 Real `.env` files, pilot configuration, webhook tokens, credentials, and tunnel details must never be committed. The repository includes only `.env.example` placeholders.
 

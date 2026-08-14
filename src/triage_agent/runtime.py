@@ -8,8 +8,10 @@ import httpx
 from fastapi import FastAPI
 
 from triage_agent.api import create_app
+from triage_agent.browser_runner import PlaywrightBrowserRunner
 from triage_agent.discord import DiscordPublisher
 from triage_agent.engine import Publisher, TriageEngine
+from triage_agent.manifests import load_site_manifest
 from triage_agent.probes import ProbeResult, probe_url, resolve_addresses
 from triage_agent.settings import Settings
 
@@ -44,6 +46,15 @@ def build_app(settings: Settings) -> FastAPI:
         confirmation_delay_seconds=settings.confirmation_delay_seconds,
     )
 
+    manifest_registry = None
+    page_checker = None
+    if settings.site_manifest_path is not None:
+        manifest_registry = load_site_manifest(settings.site_manifest_path)
+        page_checker = PlaywrightBrowserRunner(
+            resolver=resolve_addresses,
+            artifact_directory=settings.browser_artifact_directory,
+        )
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         yield
@@ -53,4 +64,7 @@ def build_app(settings: Settings) -> FastAPI:
         engine=engine,
         webhook_token=settings.webhook_token,
         lifespan=lifespan,
+        manifest_registry=manifest_registry,
+        page_checker=page_checker,
+        manual_check_concurrency=settings.manual_check_concurrency,
     )

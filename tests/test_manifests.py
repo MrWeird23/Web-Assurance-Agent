@@ -50,6 +50,7 @@ def test_parses_valid_declarative_site_manifest() -> None:
     assert [viewport.id for viewport in page.viewports] == ["desktop", "mobile"]
     assert page.required_selectors == ("main",)
     assert page.interactions[0].enabled is False
+    assert registry.allowed_hosts("home") == frozenset({"example.com"})
 
 
 def test_rejects_duplicate_site_ids() -> None:
@@ -155,9 +156,7 @@ def test_rejects_pathological_regular_expression_resource_patterns() -> None:
 
 
 def test_loads_checked_in_example_manifest() -> None:
-    registry = load_site_manifest(
-        Path(__file__).parents[1] / "config" / "sites.example.yaml"
-    )
+    registry = load_site_manifest(Path(__file__).parents[1] / "config" / "sites.example.yaml")
 
     assert registry.page("example-home").url == "https://example.com/"
 
