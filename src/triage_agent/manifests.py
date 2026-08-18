@@ -100,9 +100,13 @@ class ViewportManifest(StrictManifestModel):
     device_scale_factor: StrictFloat = Field(ge=0.25, le=4.0)
 
 
+FillValue = Annotated[str, StringConstraints(strict=True, max_length=500)]
+
+
 class InteractionManifest(StrictManifestModel):
-    action: Literal["click"]
+    action: Literal["click", "fill"]
     selector: NonEmptyText
+    value: FillValue | None = None
     enabled: StrictBool = False
 
 
@@ -229,6 +233,15 @@ def parse_site_manifest(text: str) -> ManifestRegistry:
         plugin_assertion_ids = [assertion.id for assertion in page.plugin_assertions]
         if len(plugin_assertion_ids) != len(set(plugin_assertion_ids)):
             raise ValueError("Invalid site manifest: duplicate plugin assertion ID")
+
+    for page in page_list:
+        for interaction in page.interactions:
+            if interaction.action == "fill" and interaction.value is None:
+                raise ValueError("Invalid site manifest: fill interaction requires a value")
+            if interaction.action == "click" and interaction.value is not None:
+                raise ValueError(
+                    "Invalid site manifest: click interaction must not declare a value"
+                )
 
     page_ids = [page.id for page in page_list]
     if len(page_ids) != len(set(page_ids)):

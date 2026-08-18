@@ -225,6 +225,17 @@ Acceptance criteria:
 
 ### 2.3 Safe interactions
 
+**Status:** complete in `0.2.0`
+
+Manifest-declared `click` and `fill` interactions execute through the Playwright runner only when
+explicitly enabled per interaction. Each attempt records a stable `InteractionResult` (action,
+selector, success); a failed attempt produces the `interaction_failed` finding without exposing the
+selector. Open/close navigation, accordion expansion, slider advance, and tab selection are all
+expressed as `click`; filling a field and validating client-side required-field behavior with
+deliberately incomplete input are both expressed as `fill` (including with an empty value) — no
+additional interaction primitives were needed. Manifest validation rejects any action outside the
+closed `click`/`fill` set, and rejects a `click` carrying a stray value or a `fill` missing one.
+
 Initial non-destructive interactions:
 
 - open and close navigation;

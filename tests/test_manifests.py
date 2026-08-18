@@ -179,6 +179,51 @@ def test_rejects_destructive_interaction_verbs() -> None:
         parse_site_manifest(destructive)
 
 
+def test_parses_fill_interaction_with_value() -> None:
+    manifest = VALID_MANIFEST.replace(
+        '          - action: click\n            selector: button[aria-expanded="false"]\n',
+        "          - action: fill\n"
+        '            selector: input[name="s"]\n'
+        "            value: query\n",
+    )
+
+    registry = parse_site_manifest(manifest)
+
+    interaction = registry.page("home").interactions[0]
+    assert interaction.action == "fill"
+    assert interaction.value == "query"
+
+
+def test_fill_interaction_allows_deliberately_incomplete_empty_value() -> None:
+    manifest = VALID_MANIFEST.replace(
+        '          - action: click\n            selector: button[aria-expanded="false"]\n',
+        '          - action: fill\n            selector: input[required]\n            value: ""\n',
+    )
+
+    registry = parse_site_manifest(manifest)
+
+    assert registry.page("home").interactions[0].value == ""
+
+
+def test_rejects_fill_interaction_without_value() -> None:
+    missing_value = VALID_MANIFEST.replace("action: click", "action: fill")
+
+    with pytest.raises(ValueError, match="Invalid site manifest"):
+        parse_site_manifest(missing_value)
+
+
+def test_rejects_click_interaction_with_value() -> None:
+    stray_value = VALID_MANIFEST.replace(
+        '          - action: click\n            selector: button[aria-expanded="false"]\n',
+        "          - action: click\n"
+        '            selector: button[aria-expanded="false"]\n'
+        "            value: query\n",
+    )
+
+    with pytest.raises(ValueError, match="Invalid site manifest"):
+        parse_site_manifest(stray_value)
+
+
 def test_rejects_invalid_resource_patterns() -> None:
     invalid_pattern = VALID_MANIFEST.replace("/assets/application.js", "(")
 

@@ -6,6 +6,7 @@ import pytest
 from triage_agent.browser_checks import (
     PLUGIN_ASSERTION_KINDS,
     BrowserEvidence,
+    InteractionResult,
     PluginAssertionResult,
     ResourceFailure,
     ScreenshotArtifact,
@@ -39,6 +40,7 @@ def healthy_evidence() -> BrowserEvidence:
         forbidden_text_matches=(),
         application_failure_codes=(),
         plugin_assertion_results=(),
+        interaction_results=(),
         console_errors=(),
         page_exceptions=(),
         resource_failures=(),
@@ -144,6 +146,46 @@ def test_plugin_assertion_kinds_match_the_manifest_schema() -> None:
     assert frozenset(get_args(PluginAssertionKind)) == PLUGIN_ASSERTION_KINDS
 
 
+def test_failed_interaction_fails_with_stable_code_without_exposing_selector() -> None:
+    evidence = replace(
+        healthy_evidence(),
+        interaction_results=(
+            InteractionResult(action="click", selector="button.nav-toggle", succeeded=False),
+        ),
+    )
+
+    result = evaluate_browser_evidence(evidence)
+
+    assert result.healthy is False
+    assert [(finding.code, finding.message) for finding in result.failures] == [
+        ("interaction_failed", "A safe click interaction failed.")
+    ]
+    assert all("button.nav-toggle" not in finding.message for finding in result.failures)
+
+
+def test_succeeded_interaction_remains_healthy() -> None:
+    evidence = replace(
+        healthy_evidence(),
+        interaction_results=(
+            InteractionResult(action="fill", selector="input[name='s']", succeeded=True),
+        ),
+    )
+
+    assert evaluate_browser_evidence(evidence).healthy is True
+
+
+def test_unknown_interaction_action_invalidates_evidence() -> None:
+    evidence = replace(
+        healthy_evidence(),
+        interaction_results=(InteractionResult(action="submit", selector="form", succeeded=True),),
+    )
+
+    result = evaluate_browser_evidence(evidence)
+
+    assert result.healthy is False
+    assert [finding.code for finding in result.failures] == ["invalid_browser_evidence"]
+
+
 def test_missing_required_selector_fails() -> None:
     evidence = healthy_evidence()
     missing_main = replace(
@@ -154,14 +196,10 @@ def test_missing_required_selector_fails() -> None:
         height=0,
     )
 
-    result = evaluate_browser_evidence(
-        replace(evidence, required_selector_results=(missing_main,))
-    )
+    result = evaluate_browser_evidence(replace(evidence, required_selector_results=(missing_main,)))
 
     assert result.healthy is False
-    assert [finding.code for finding in result.failures] == [
-        "required_selector_missing"
-    ]
+    assert [finding.code for finding in result.failures] == ["required_selector_missing"]
 
 
 def test_zero_sized_required_selector_fails() -> None:
@@ -177,9 +215,7 @@ def test_zero_sized_required_selector_fails() -> None:
     )
 
     assert result.healthy is False
-    assert [finding.code for finding in result.failures] == [
-        "required_selector_zero_geometry"
-    ]
+    assert [finding.code for finding in result.failures] == ["required_selector_zero_geometry"]
 
 
 def test_forbidden_wordpress_error_text_fails() -> None:
@@ -193,9 +229,7 @@ def test_forbidden_wordpress_error_text_fails() -> None:
     result = evaluate_browser_evidence(evidence)
 
     assert result.healthy is False
-    assert [finding.code for finding in result.failures] == [
-        "forbidden_text_match"
-    ]
+    assert [finding.code for finding in result.failures] == ["forbidden_text_match"]
 
 
 def test_uncaught_page_exception_fails() -> None:
@@ -226,9 +260,7 @@ def test_critical_resource_failure_fails() -> None:
     result = evaluate_browser_evidence(evidence)
 
     assert result.healthy is False
-    assert [finding.code for finding in result.failures] == [
-        "critical_resource_failure"
-    ]
+    assert [finding.code for finding in result.failures] == ["critical_resource_failure"]
 
 
 def test_noncritical_resource_failure_is_informational() -> None:
@@ -249,9 +281,7 @@ def test_noncritical_resource_failure_is_informational() -> None:
 
     assert result.healthy is True
     assert result.failures == ()
-    assert [finding.code for finding in result.information] == [
-        "noncritical_resource_failure"
-    ]
+    assert [finding.code for finding in result.information] == ["noncritical_resource_failure"]
 
 
 def test_resource_type_is_not_copied_into_finding_messages() -> None:
@@ -282,9 +312,7 @@ def test_missing_required_text_fails() -> None:
     result = evaluate_browser_evidence(evidence)
 
     assert result.healthy is False
-    assert [finding.code for finding in result.failures] == [
-        "required_text_missing"
-    ]
+    assert [finding.code for finding in result.failures] == ["required_text_missing"]
 
 
 def test_invisible_required_selector_fails() -> None:
@@ -294,14 +322,10 @@ def test_invisible_required_selector_fails() -> None:
         visible=False,
     )
 
-    result = evaluate_browser_evidence(
-        replace(evidence, required_selector_results=(hidden_main,))
-    )
+    result = evaluate_browser_evidence(replace(evidence, required_selector_results=(hidden_main,)))
 
     assert result.healthy is False
-    assert [finding.code for finding in result.failures] == [
-        "required_selector_not_visible"
-    ]
+    assert [finding.code for finding in result.failures] == ["required_selector_not_visible"]
 
 
 def test_console_error_fails() -> None:
@@ -389,9 +413,7 @@ def test_malformed_browser_evidence_fails_closed(evidence: BrowserEvidence) -> N
     result = evaluate_browser_evidence(evidence)
 
     assert result.healthy is False
-    assert [finding.code for finding in result.failures] == [
-        "invalid_browser_evidence"
-    ]
+    assert [finding.code for finding in result.failures] == ["invalid_browser_evidence"]
 
 
 @pytest.mark.parametrize(
@@ -399,9 +421,7 @@ def test_malformed_browser_evidence_fails_closed(evidence: BrowserEvidence) -> N
     [
         replace(
             healthy_evidence(),
-            required_text_results=(
-                TextResult(value="Welcome", found=cast(bool, "false")),
-            ),
+            required_text_results=(TextResult(value="Welcome", found=cast(bool, "false")),),
         ),
         replace(
             healthy_evidence(),
@@ -418,6 +438,10 @@ def test_malformed_browser_evidence_fails_closed(evidence: BrowserEvidence) -> N
                 ),
             ),
         ),
+        replace(
+            healthy_evidence(),
+            interaction_results=(InteractionResult(action="click", selector="", succeeded=True),),
+        ),
     ],
 )
 def test_malformed_nested_browser_evidence_fails_closed(
@@ -426,6 +450,4 @@ def test_malformed_nested_browser_evidence_fails_closed(
     result = evaluate_browser_evidence(evidence)
 
     assert result.healthy is False
-    assert [finding.code for finding in result.failures] == [
-        "invalid_browser_evidence"
-    ]
+    assert [finding.code for finding in result.failures] == ["invalid_browser_evidence"]

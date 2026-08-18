@@ -32,6 +32,13 @@ class PluginAssertionResult:
 
 
 @dataclass(frozen=True, slots=True)
+class InteractionResult:
+    action: str
+    selector: str
+    succeeded: bool
+
+
+@dataclass(frozen=True, slots=True)
 class ResourceFailure:
     url: str
     status_code: int | None
@@ -62,6 +69,7 @@ class BrowserEvidence:
     forbidden_text_matches: tuple[str, ...]
     application_failure_codes: tuple[str, ...]
     plugin_assertion_results: tuple[PluginAssertionResult, ...]
+    interaction_results: tuple[InteractionResult, ...]
     console_errors: tuple[str, ...]
     page_exceptions: tuple[str, ...]
     resource_failures: tuple[ResourceFailure, ...]
@@ -108,6 +116,7 @@ PLUGIN_ASSERTION_KINDS = frozenset(
         "multilingual",
     }
 )
+INTERACTION_ACTIONS = frozenset({"click", "fill"})
 
 
 def _is_bounded_int(value: object, *, minimum: int, maximum: int) -> bool:
@@ -148,6 +157,7 @@ def _is_valid_evidence(evidence: BrowserEvidence) -> bool:
             evidence.forbidden_text_matches,
             evidence.application_failure_codes,
             evidence.plugin_assertion_results,
+            evidence.interaction_results,
             evidence.console_errors,
             evidence.page_exceptions,
             evidence.resource_failures,
@@ -225,18 +235,24 @@ def _is_valid_evidence(evidence: BrowserEvidence) -> bool:
     ):
         return False
     if any(
+        type(result) is not InteractionResult
+        or type(result.action) is not str
+        or result.action not in INTERACTION_ACTIONS
+        or type(result.selector) is not str
+        or not result.selector
+        or type(result.succeeded) is not bool
+        for result in evidence.interaction_results
+    ):
+        return False
+    if any(
         type(resource) is not ResourceFailure
         or type(resource.url) is not str
         or type(resource.resource_type) is not str
         or type(resource.critical) is not bool
-        or (
-            resource.error is not None and type(resource.error) is not str
-        )
+        or (resource.error is not None and type(resource.error) is not str)
         or (
             resource.status_code is not None
-            and not (
-                _is_bounded_int(resource.status_code, minimum=100, maximum=599)
-            )
+            and not (_is_bounded_int(resource.status_code, minimum=100, maximum=599))
         )
         for resource in evidence.resource_failures
     ):
@@ -343,6 +359,14 @@ def evaluate_browser_evidence(evidence: BrowserEvidence) -> BrowserEvaluation:
         )
         for result in evidence.plugin_assertion_results
         if not result.satisfied
+    )
+    failures.extend(
+        BrowserFinding(
+            code="interaction_failed",
+            message=f"A safe {result.action} interaction failed.",
+        )
+        for result in evidence.interaction_results
+        if not result.succeeded
     )
     failures.extend(
         BrowserFinding(

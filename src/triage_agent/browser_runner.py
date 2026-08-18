@@ -25,6 +25,7 @@ from triage_agent import __version__
 from triage_agent.application_signatures import detect_application_failure_codes
 from triage_agent.browser_checks import (
     BrowserEvidence,
+    InteractionResult,
     PluginAssertionResult,
     ResourceFailure,
     ScreenshotArtifact,
@@ -130,6 +131,9 @@ class BrowserRoute(Protocol):
 MAX_BROWSER_REDIRECTS = 10
 DEFAULT_NAVIGATION_TIMEOUT_MS = 15_000
 DEFAULT_TOTAL_TIMEOUT_MS = 30_000
+# ponytail: fixed bound, not yet a runner field; make it configurable if a
+# manifest ever needs interactions slower than 5s to become actionable.
+INTERACTION_ACTION_TIMEOUT_MS = 5_000
 MAX_BROWSER_ERROR_RECORDS = 100
 MAX_BROWSER_ERROR_LENGTH = 500
 MAX_BROWSER_RESOURCE_FAILURES = 100
@@ -399,10 +403,7 @@ def _browser_cookies(cookies: httpx.Cookies) -> tuple[BrowserCookie, ...]:
             same_site=same_site,
         )
 
-    return tuple(
-        convert(cookie)
-        for cookie in cookies.jar
-    )
+    return tuple(convert(cookie) for cookie in cookies.jar)
 
 
 def _playwright_cookies(cookies: tuple[BrowserCookie, ...]) -> list[dict[str, Any]]:
@@ -463,11 +464,7 @@ async def fetch_browser_redirect_chain(
         redirect_cookies.set_cookie_header(cookie_request)
         scoped_cookie = cookie_request.headers.get("cookie")
         existing_cookie = next(
-            (
-                value
-                for name, value in hop_headers.items()
-                if name.lower() == "cookie"
-            ),
+            (value for name, value in hop_headers.items() if name.lower() == "cookie"),
             None,
         )
         merged_cookie = _merge_cookie_headers(existing_cookie, scoped_cookie)
@@ -578,11 +575,7 @@ def _redirect_depth(request: Any) -> int:
 
 
 def _png_dimensions(content: bytes) -> tuple[int, int]:
-    if (
-        len(content) < 24
-        or content[:8] != _PNG_SIGNATURE
-        or content[12:16] != b"IHDR"
-    ):
+    if len(content) < 24 or content[:8] != _PNG_SIGNATURE or content[12:16] != b"IHDR":
         raise BrowserFetchError("Browser screenshot was not a valid PNG")
     width = int.from_bytes(content[16:20], byteorder="big")
     height = int.from_bytes(content[20:24], byteorder="big")
@@ -631,6 +624,7 @@ def _incomplete_evidence(
         forbidden_text_matches=(),
         application_failure_codes=(),
         plugin_assertion_results=(),
+        interaction_results=(),
         console_errors=(),
         page_exceptions=(),
         resource_failures=(),
@@ -750,9 +744,7 @@ class PlaywrightBrowserRunner:
                                     entry_response = None
                                     await route.fulfill(
                                         status=resource_response.status_code,
-                                        headers=_playwright_headers(
-                                            resource_response.headers
-                                        ),
+                                        headers=_playwright_headers(resource_response.headers),
                                         body=resource_response.body,
                                     )
                                 else:
@@ -770,8 +762,7 @@ class PlaywrightBrowserRunner:
                                 if resource_response is None:
                                     if (
                                         request.resource_type != "document"
-                                        and len(resource_failures)
-                                        < MAX_BROWSER_RESOURCE_FAILURES
+                                        and len(resource_failures) < MAX_BROWSER_RESOURCE_FAILURES
                                     ):
                                         failed_path = urlsplit(request.url).path
                                         if not any(
@@ -798,8 +789,7 @@ class PlaywrightBrowserRunner:
                                 if (
                                     resource_response.status_code < 400
                                     or request.resource_type == "document"
-                                    or len(resource_failures)
-                                    >= MAX_BROWSER_RESOURCE_FAILURES
+                                    or len(resource_failures) >= MAX_BROWSER_RESOURCE_FAILURES
                                 ):
                                     return
                                 path = urlsplit(request.url).path
@@ -894,6 +884,29 @@ class PlaywrightBrowserRunner:
                                     satisfied=satisfied,
                                 )
                             )
+                        interaction_results: list[InteractionResult] = []
+                        for interaction in page.interactions:
+                            if not interaction.enabled:
+                                continue
+                            locator = browser_page.locator(interaction.selector).first
+                            try:
+                                if interaction.action == "click":
+                                    await locator.click(timeout=INTERACTION_ACTION_TIMEOUT_MS)
+                                else:
+                                    await locator.fill(
+                                        interaction.value or "",
+                                        timeout=INTERACTION_ACTION_TIMEOUT_MS,
+                                    )
+                                succeeded = True
+                            except PlaywrightError:
+                                succeeded = False
+                            interaction_results.append(
+                                InteractionResult(
+                                    action=interaction.action,
+                                    selector=interaction.selector,
+                                    succeeded=succeeded,
+                                )
+                            )
                         screenshot: ScreenshotArtifact | None = None
                         if self.artifact_directory is not None:
                             _validate_screenshot_viewport(viewport)
@@ -910,9 +923,7 @@ class PlaywrightBrowserRunner:
                             )
                             if len(screenshot_bytes) > MAX_BROWSER_SCREENSHOT_BYTES:
                                 raise BrowserFetchError("Browser screenshot exceeded size limit")
-                            screenshot_width, screenshot_height = _png_dimensions(
-                                screenshot_bytes
-                            )
+                            screenshot_width, screenshot_height = _png_dimensions(screenshot_bytes)
                             self.artifact_directory.mkdir(parents=True, exist_ok=True)
                             file_descriptor, temporary_name = tempfile.mkstemp(
                                 dir=self.artifact_directory,
@@ -960,6 +971,7 @@ class PlaywrightBrowserRunner:
                                 shortcode_names=page.application_shortcodes,
                             ),
                             plugin_assertion_results=tuple(plugin_assertion_results),
+                            interaction_results=tuple(interaction_results),
                             console_errors=tuple(console_errors),
                             page_exceptions=tuple(page_exceptions),
                             resource_failures=tuple(resource_failures),

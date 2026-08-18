@@ -69,6 +69,7 @@ class StubPageChecker:
             forbidden_text_matches=(),
             application_failure_codes=(),
             plugin_assertion_results=(),
+            interaction_results=(),
             console_errors=(),
             page_exceptions=(),
             resource_failures=(),

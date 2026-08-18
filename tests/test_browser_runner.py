@@ -8,8 +8,9 @@ from pathlib import Path
 import httpx
 import pytest
 
-from triage_agent.browser_checks import PluginAssertionResult
+from triage_agent.browser_checks import InteractionResult, PluginAssertionResult
 from triage_agent.manifests import (
+    InteractionManifest,
     PageManifest,
     PluginAssertionKind,
     PluginAssertionManifest,
@@ -272,10 +273,7 @@ async def test_playwright_runner_captures_intercepted_healthy_page() -> None:
         return httpx.Response(
             200,
             headers={"content-type": "text/html; charset=utf-8"},
-            content=(
-                b"<!doctype html><title>Fixture</title>"
-                b"<main><h1>Welcome</h1></main>"
-            ),
+            content=(b"<!doctype html><title>Fixture</title><main><h1>Welcome</h1></main>"),
         )
 
     from triage_agent.browser_runner import PlaywrightBrowserRunner
@@ -322,8 +320,7 @@ async def test_playwright_runner_captures_collapsed_required_geometry() -> None:
             200,
             headers={"content-type": "text/html; charset=utf-8"},
             content=(
-                b"<style>main{width:0;height:0;overflow:hidden}</style>"
-                b"<main>Collapsed</main>"
+                b"<style>main{width:0;height:0;overflow:hidden}</style><main>Collapsed</main>"
             ),
         )
 
@@ -361,8 +358,7 @@ async def test_playwright_runner_captures_satisfied_plugin_assertion() -> None:
             200,
             headers={"content-type": "text/html; charset=utf-8"},
             content=(
-                b"<form class=\"wpcf7-form\"><input name=\"your-email\">"
-                b"<input type=\"submit\"></form>"
+                b'<form class="wpcf7-form"><input name="your-email"><input type="submit"></form>'
             ),
         )
 
@@ -377,7 +373,7 @@ async def test_playwright_runner_captures_satisfied_plugin_assertion() -> None:
             PluginAssertionManifest(
                 id="contact-form",
                 kind="contact-form-7",
-                required_selectors=("form.wpcf7-form", "input[name=\"your-email\"]"),
+                required_selectors=("form.wpcf7-form", 'input[name="your-email"]'),
             ),
         ),
     )
@@ -398,13 +394,12 @@ async def test_playwright_runner_captures_satisfied_plugin_assertion() -> None:
     [
         (b"<p>No form here</p>", "missing selector"),
         (
-            b"<form class=\"wpcf7-form\" style=\"display:none\">"
-            b"<input name=\"your-email\"></form>",
+            b'<form class="wpcf7-form" style="display:none"><input name="your-email"></form>',
             "hidden selector",
         ),
         (
             b"<style>.wpcf7-form{width:0;height:0;overflow:hidden}</style>"
-            b"<form class=\"wpcf7-form\"><input name=\"your-email\"></form>",
+            b'<form class="wpcf7-form"><input name="your-email"></form>',
             "zero-geometry selector",
         ),
     ],
@@ -435,7 +430,7 @@ async def test_playwright_runner_captures_failed_plugin_assertion(
             PluginAssertionManifest(
                 id="contact-form",
                 kind="contact-form-7",
-                required_selectors=("form.wpcf7-form", "input[name=\"your-email\"]"),
+                required_selectors=("form.wpcf7-form", 'input[name="your-email"]'),
             ),
         ),
     )
@@ -497,6 +492,142 @@ async def test_playwright_runner_captures_plugin_assertions_for_every_supported_
     assert evidence.plugin_assertion_results == (
         PluginAssertionResult(assertion_id="assertion", kind=kind, satisfied=True),
     )
+
+
+async def test_playwright_runner_executes_enabled_click_interaction() -> None:
+    async def resolver(host: str) -> set[str]:
+        return {"93.184.216.34"}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html; charset=utf-8"},
+            content=b'<button class="nav-toggle" aria-expanded="false">Menu</button>',
+        )
+
+    from triage_agent.browser_runner import PlaywrightBrowserRunner
+
+    viewport = ViewportManifest(id="desktop", width=1440, height=900, device_scale_factor=1.0)
+    page = PageManifest(
+        id="home",
+        url="https://example.com/",
+        viewports=(viewport,),
+        interactions=(
+            InteractionManifest(action="click", selector="button.nav-toggle", enabled=True),
+        ),
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        evidence = await PlaywrightBrowserRunner(client=client, resolver=resolver).run(
+            page=page,
+            viewport=viewport,
+            allowed_hosts={"example.com"},
+        )
+
+    assert evidence.interaction_results == (
+        InteractionResult(action="click", selector="button.nav-toggle", succeeded=True),
+    )
+
+
+async def test_playwright_runner_executes_enabled_fill_interaction() -> None:
+    async def resolver(host: str) -> set[str]:
+        return {"93.184.216.34"}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html; charset=utf-8"},
+            content=b'<input name="s" type="text">',
+        )
+
+    from triage_agent.browser_runner import PlaywrightBrowserRunner
+
+    viewport = ViewportManifest(id="desktop", width=1440, height=900, device_scale_factor=1.0)
+    page = PageManifest(
+        id="home",
+        url="https://example.com/",
+        viewports=(viewport,),
+        interactions=(
+            InteractionManifest(
+                action="fill", selector="input[name='s']", value="query", enabled=True
+            ),
+        ),
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        evidence = await PlaywrightBrowserRunner(client=client, resolver=resolver).run(
+            page=page,
+            viewport=viewport,
+            allowed_hosts={"example.com"},
+        )
+
+    assert evidence.interaction_results == (
+        InteractionResult(action="fill", selector="input[name='s']", succeeded=True),
+    )
+
+
+async def test_playwright_runner_records_failed_interaction_for_missing_selector() -> None:
+    async def resolver(host: str) -> set[str]:
+        return {"93.184.216.34"}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html; charset=utf-8"},
+            content=b"<main>No matching element</main>",
+        )
+
+    from triage_agent.browser_runner import PlaywrightBrowserRunner
+
+    viewport = ViewportManifest(id="desktop", width=1440, height=900, device_scale_factor=1.0)
+    page = PageManifest(
+        id="home",
+        url="https://example.com/",
+        viewports=(viewport,),
+        interactions=(
+            InteractionManifest(action="click", selector="button.nav-toggle", enabled=True),
+        ),
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        evidence = await PlaywrightBrowserRunner(client=client, resolver=resolver).run(
+            page=page,
+            viewport=viewport,
+            allowed_hosts={"example.com"},
+        )
+
+    assert evidence.interaction_results == (
+        InteractionResult(action="click", selector="button.nav-toggle", succeeded=False),
+    )
+
+
+async def test_playwright_runner_skips_disabled_interaction() -> None:
+    async def resolver(host: str) -> set[str]:
+        return {"93.184.216.34"}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html; charset=utf-8"},
+            content=b'<button class="nav-toggle" aria-expanded="false">Menu</button>',
+        )
+
+    from triage_agent.browser_runner import PlaywrightBrowserRunner
+
+    viewport = ViewportManifest(id="desktop", width=1440, height=900, device_scale_factor=1.0)
+    page = PageManifest(
+        id="home",
+        url="https://example.com/",
+        viewports=(viewport,),
+        interactions=(
+            InteractionManifest(action="click", selector="button.nav-toggle", enabled=False),
+        ),
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        evidence = await PlaywrightBrowserRunner(client=client, resolver=resolver).run(
+            page=page,
+            viewport=viewport,
+            allowed_hosts={"example.com"},
+        )
+
+    assert evidence.interaction_results == ()
 
 
 async def test_playwright_runner_captures_console_and_page_errors() -> None:
@@ -593,8 +724,7 @@ async def test_playwright_runner_records_policy_blocked_critical_resource() -> N
             200,
             headers={"content-type": "text/html; charset=utf-8"},
             content=(
-                b"<main>Welcome</main>"
-                b"<script src='https://127.0.0.1/assets/unsafe.js'></script>"
+                b"<main>Welcome</main><script src='https://127.0.0.1/assets/unsafe.js'></script>"
             ),
         )
 
@@ -648,9 +778,7 @@ async def test_playwright_runner_returns_typed_evidence_on_total_timeout() -> No
         required_text=("Welcome",),
         required_selectors=("main",),
     )
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(delayed_request)
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(delayed_request)) as client:
         evidence = await PlaywrightBrowserRunner(
             client=client,
             resolver=resolver,
@@ -807,10 +935,7 @@ async def test_redirected_document_resolves_relative_resource_on_final_host() ->
                 headers={"content-type": "text/html; charset=utf-8"},
                 content=b"<main>Healthy</main><script src='/assets/final.js'></script>",
             )
-        if (
-            request.url.host == "93.184.216.35"
-            and request.url.path == "/assets/final.js"
-        ):
+        if request.url.host == "93.184.216.35" and request.url.path == "/assets/final.js":
             return httpx.Response(
                 200,
                 headers={"content-type": "application/javascript"},
@@ -1367,8 +1492,7 @@ async def test_playwright_runner_bounds_request_burst_and_concurrency() -> None:
         request_count += 1
         if request.url.path == "/":
             scripts = b"".join(
-                f"<script src='/asset-{index}.js'></script>".encode()
-                for index in range(100)
+                f"<script src='/asset-{index}.js'></script>".encode() for index in range(100)
             )
             return httpx.Response(
                 200,
@@ -1515,11 +1639,7 @@ async def test_redirect_cookie_attributes_are_case_insensitive() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
-            headers={
-                "set-cookie": (
-                    "session=value; Path=/; Secure; httponly; samesite=strict"
-                )
-            },
+            headers={"set-cookie": ("session=value; Path=/; Secure; httponly; samesite=strict")},
         )
 
     from triage_agent.browser_runner import fetch_browser_redirect_chain
