@@ -259,11 +259,19 @@ Deferred pending separate approval:
 
 ### 3.1 Deterministic screenshot normalization
 
+**Status:** complete in `0.2.0`
+
 - wait for declared ready selectors, fonts, and images;
 - disable animations, transitions, caret, and smooth scrolling;
 - hide or mask configured dynamic regions;
 - capture fixed desktop/mobile viewports;
 - record page dimensions and browser version.
+
+An optional per-page `ready_selector` gates evidence capture until that element is visible; page
+fonts and images are always awaited before capture. Animation/transition/caret suppression, dynamic
+region masking, and fixed-viewport capture were already in place from the browser runner. Evidence
+now also records the full document's scroll dimensions (`page_width`/`page_height`, distinct from
+the fixed viewport) and the Chromium `browser_version` actually used.
 
 ### 3.2 Perceptual comparison
 

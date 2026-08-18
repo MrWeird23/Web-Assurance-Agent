@@ -605,9 +605,12 @@ def _incomplete_evidence(
             height=viewport.height,
             device_scale_factor=viewport.device_scale_factor,
         ),
+        page_width=0,
+        page_height=0,
         device_profile=viewport.id,
         document_status=None,
         title="",
+        browser_version="",
         required_text_results=tuple(
             TextResult(value=text, found=False) for text in page.required_text
         ),
@@ -849,6 +852,19 @@ class PlaywrightBrowserRunner:
                                 "scroll-behavior:auto!important}"
                             )
                         )
+                        if page.ready_selector is not None:
+                            await browser_page.locator(page.ready_selector).first.wait_for(
+                                state="visible", timeout=self.navigation_timeout_ms
+                            )
+                        await browser_page.evaluate("document.fonts.ready")
+                        await browser_page.wait_for_function(
+                            "Array.from(document.images).every((img) => img.complete)",
+                            timeout=self.navigation_timeout_ms,
+                        )
+                        page_dimensions = await browser_page.evaluate(
+                            "({width: document.documentElement.scrollWidth,"
+                            " height: document.documentElement.scrollHeight})"
+                        )
                         body_text = await browser_page.locator("body").inner_text()
                         selector_results: list[SelectorResult] = []
                         for selector in page.required_selectors:
@@ -955,9 +971,12 @@ class PlaywrightBrowserRunner:
                                 height=viewport.height,
                                 device_scale_factor=viewport.device_scale_factor,
                             ),
+                            page_width=int(page_dimensions["width"]),
+                            page_height=int(page_dimensions["height"]),
                             device_profile=viewport.id,
                             document_status=response.status if response is not None else None,
                             title=await browser_page.title(),
+                            browser_version=browser.version,
                             required_text_results=tuple(
                                 TextResult(value=text, found=text in body_text)
                                 for text in page.required_text

@@ -61,9 +61,12 @@ class BrowserEvidence:
     requested_url: str
     final_url: str
     viewport: Viewport
+    page_width: int
+    page_height: int
     device_profile: str
     document_status: int | None
     title: str
+    browser_version: str
     required_text_results: tuple[TextResult, ...]
     required_selector_results: tuple[SelectorResult, ...]
     forbidden_text_matches: tuple[str, ...]
@@ -144,6 +147,7 @@ def _is_valid_evidence(evidence: BrowserEvidence) -> bool:
             evidence.final_url,
             evidence.device_profile,
             evidence.title,
+            evidence.browser_version,
         )
     ):
         return False
@@ -169,6 +173,8 @@ def _is_valid_evidence(evidence: BrowserEvidence) -> bool:
     if type(viewport) is not Viewport or not (
         _is_bounded_int(viewport.width, minimum=1, maximum=_MAX_DIMENSION_PX)
         and _is_bounded_int(viewport.height, minimum=1, maximum=_MAX_DIMENSION_PX)
+        and _is_bounded_int(evidence.page_width, minimum=0, maximum=int(_MAX_GEOMETRY_PX))
+        and _is_bounded_int(evidence.page_height, minimum=0, maximum=int(_MAX_GEOMETRY_PX))
         and _is_finite_number(
             viewport.device_scale_factor,
             minimum=0.25,

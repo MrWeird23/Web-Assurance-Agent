@@ -130,6 +130,7 @@ class PageManifest(StrictManifestModel):
     id: Identifier
     url: NonEmptyText
     viewports: tuple[ViewportManifest, ...] = Field(min_length=1, max_length=10)
+    ready_selector: NonEmptyText | None = None
     required_text: tuple[NonEmptyText, ...] = Field(default=(), max_length=100)
     required_selectors: tuple[NonEmptyText, ...] = Field(default=(), max_length=100)
     forbidden_text: tuple[NonEmptyText, ...] = Field(default=(), max_length=100)
