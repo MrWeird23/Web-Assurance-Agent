@@ -149,10 +149,15 @@ Incident classification
 
 ```bash
 uv sync --python 3.11
+uv run playwright install --with-deps chromium
 uv run pytest -q
 uv run ruff check .
 uv run mypy src tests
 ```
+
+The Playwright browser install step is required once per environment for the isolated
+Chromium runner (Milestone 3) and manual browser checks; it is skipped only inside the
+Docker image, which installs it during the build instead.
 
 Start the API in dry-run mode:
 
