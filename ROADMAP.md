@@ -180,7 +180,7 @@ Rules:
 
 ### 2.1 Deterministic error signatures
 
-Initial narrow signatures:
+Implemented narrow signatures over rendered visible body text:
 
 - WordPress critical-error page;
 - PHP `Fatal error` and `Parse error` output;
@@ -190,6 +190,9 @@ Initial narrow signatures:
 - visible unrendered shortcode patterns.
 
 Broad words such as `error` alone are prohibited because ordinary content would create false positives.
+Findings expose stable typed codes rather than raw page text. PHP signatures require both a
+specific failure prefix and a PHP file/line location; shortcode detection is restricted to a small
+allowlist of known WordPress/plugin shortcode names.
 
 ### 2.2 Plugin-specific public assertions
 

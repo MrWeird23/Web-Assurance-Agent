@@ -53,6 +53,7 @@ class BrowserEvidence:
     required_text_results: tuple[TextResult, ...]
     required_selector_results: tuple[SelectorResult, ...]
     forbidden_text_matches: tuple[str, ...]
+    application_failure_codes: tuple[str, ...]
     console_errors: tuple[str, ...]
     page_exceptions: tuple[str, ...]
     resource_failures: tuple[ResourceFailure, ...]
@@ -78,6 +79,17 @@ _MAX_DIMENSION_PX = 32_768
 _MAX_DURATION_MS = 86_400_000
 _MAX_GEOMETRY_PX = 1_000_000.0
 _MAX_DEVICE_SCALE_FACTOR = 16.0
+APPLICATION_FAILURE_CODES = frozenset(
+    {
+        "wordpress_critical_error",
+        "php_fatal_error",
+        "php_parse_error",
+        "php_uncaught_exception",
+        "wordpress_database_connection_failure",
+        "wordpress_maintenance_mode",
+        "wordpress_unrendered_shortcode",
+    }
+)
 
 
 def _is_bounded_int(value: object, *, minimum: int, maximum: int) -> bool:
@@ -116,6 +128,7 @@ def _is_valid_evidence(evidence: BrowserEvidence) -> bool:
             evidence.required_text_results,
             evidence.required_selector_results,
             evidence.forbidden_text_matches,
+            evidence.application_failure_codes,
             evidence.console_errors,
             evidence.page_exceptions,
             evidence.resource_failures,
@@ -174,10 +187,13 @@ def _is_valid_evidence(evidence: BrowserEvidence) -> bool:
         type(value) is not str
         for value in (
             *evidence.forbidden_text_matches,
+            *evidence.application_failure_codes,
             *evidence.console_errors,
             *evidence.page_exceptions,
         )
     ):
+        return False
+    if any(code not in APPLICATION_FAILURE_CODES for code in evidence.application_failure_codes):
         return False
     if any(
         type(resource) is not ResourceFailure
@@ -283,6 +299,13 @@ def evaluate_browser_evidence(evidence: BrowserEvidence) -> BrowserEvaluation:
             message="Forbidden application error text was visible.",
         )
         for _match in evidence.forbidden_text_matches
+    )
+    failures.extend(
+        BrowserFinding(
+            code="application_failure",
+            message=f"Detected application failure: {failure_code}",
+        )
+        for failure_code in evidence.application_failure_codes
     )
     failures.extend(
         BrowserFinding(

@@ -8,7 +8,8 @@ Uptime Kuma remains the fast deterministic outage detector. This service receive
 > The `0.2.0` development branch provides HTTP incident confirmation and reporting,
 > strict declarative page manifests, and an isolated Playwright/Chromium runner with
 > deterministic browser evidence. An authenticated manual endpoint can invoke checks for
-> manifest-defined pages; scheduling, WordPress/plugin assertions, synthetic journeys, and
+> manifest-defined pages, including narrow detection of visible WordPress and PHP failure
+> signatures; scheduling, plugin-specific assertions, synthetic journeys, and
 > visual regression remain planned in [ROADMAP.md](ROADMAP.md).
 
 ## Why this exists
@@ -24,6 +25,13 @@ This first release solves the first problem safely:
 - leaves existing Kuma notification providers untouched.
 
 The roadmap extends this foundation toward proving that a site rendered and behaved as expected.
+
+Built-in application failure detection currently recognizes the canonical WordPress critical-error,
+database-connection, and maintenance pages; PHP fatal, parse, and uncaught exception output with
+file/line evidence; and a narrow allowlist of visibly unrendered plugin shortcodes. It does not match
+the word `error` by itself, and reports stable codes rather than copying raw page text into results.
+Shortcode detection is opt-in per page through `application_shortcodes` in the site manifest; list
+only shortcode names that are expected to render on that specific page.
 
 ## Current capabilities
 

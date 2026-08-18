@@ -35,6 +35,15 @@ NonEmptyText = Annotated[
     str,
     StringConstraints(strict=True, min_length=1, max_length=500),
 ]
+ShortcodeName = Annotated[
+    str,
+    StringConstraints(
+        strict=True,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    ),
+]
 MAX_MANIFEST_BYTES = 1024 * 1024
 _FORBIDDEN_GLOB_CHARACTERS = frozenset(r"\(){}+|^$")
 
@@ -107,6 +116,7 @@ class PageManifest(StrictManifestModel):
     critical_resource_patterns: tuple[NonEmptyText, ...] = Field(default=(), max_length=100)
     ignored_resource_patterns: tuple[NonEmptyText, ...] = Field(default=(), max_length=100)
     screenshot_masks: tuple[NonEmptyText, ...] = Field(default=(), max_length=100)
+    application_shortcodes: tuple[ShortcodeName, ...] = Field(default=(), max_length=20)
     interactions: tuple[InteractionManifest, ...] = Field(default=(), max_length=20)
 
 

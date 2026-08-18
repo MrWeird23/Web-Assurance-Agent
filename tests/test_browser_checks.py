@@ -34,6 +34,7 @@ def healthy_evidence() -> BrowserEvidence:
             ),
         ),
         forbidden_text_matches=(),
+        application_failure_codes=(),
         console_errors=(),
         page_exceptions=(),
         resource_failures=(),
@@ -54,6 +55,32 @@ def test_healthy_browser_evidence_evaluates_healthy() -> None:
     assert result.healthy is True
     assert result.failures == ()
     assert result.information == ()
+
+
+def test_detected_application_failure_code_fails_without_exposing_page_text() -> None:
+    evidence = replace(
+        healthy_evidence(),
+        application_failure_codes=("wordpress_critical_error",),
+    )
+
+    result = evaluate_browser_evidence(evidence)
+
+    assert result.healthy is False
+    assert [(finding.code, finding.message) for finding in result.failures] == [
+        (
+            "application_failure",
+            "Detected application failure: wordpress_critical_error",
+        )
+    ]
+
+
+def test_unknown_application_failure_code_invalidates_evidence() -> None:
+    evidence = replace(healthy_evidence(), application_failure_codes=("arbitrary",))
+
+    result = evaluate_browser_evidence(evidence)
+
+    assert result.healthy is False
+    assert [finding.code for finding in result.failures] == ["invalid_browser_evidence"]
 
 
 def test_missing_required_selector_fails() -> None:

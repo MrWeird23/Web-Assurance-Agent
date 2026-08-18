@@ -65,6 +65,7 @@ class StubPageChecker:
                 SelectorResult(selector="main", found=True, visible=True, width=100, height=100),
             ),
             forbidden_text_matches=(),
+            application_failure_codes=(),
             console_errors=(),
             page_exceptions=(),
             resource_failures=(),

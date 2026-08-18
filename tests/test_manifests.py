@@ -36,6 +36,8 @@ sites:
           - /analytics
         screenshot_masks:
           - .dynamic-banner
+        application_shortcodes:
+          - contact-form-7
         interactions:
           - action: click
             selector: button[aria-expanded="false"]
@@ -49,6 +51,7 @@ def test_parses_valid_declarative_site_manifest() -> None:
     assert page.url == "https://example.com/"
     assert [viewport.id for viewport in page.viewports] == ["desktop", "mobile"]
     assert page.required_selectors == ("main",)
+    assert page.application_shortcodes == ("contact-form-7",)
     assert page.interactions[0].enabled is False
     assert registry.allowed_hosts("home") == frozenset({"example.com"})
 

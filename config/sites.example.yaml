@@ -26,4 +26,6 @@ sites:
         critical_resource_patterns: []
         ignored_resource_patterns: []
         screenshot_masks: []
+        # Opt in only for shortcodes that should render on this page.
+        application_shortcodes: []
         interactions: []

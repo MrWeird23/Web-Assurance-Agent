@@ -22,6 +22,7 @@ from playwright.async_api import (
 from playwright.async_api import Error as PlaywrightError
 
 from triage_agent import __version__
+from triage_agent.application_signatures import detect_application_failure_codes
 from triage_agent.browser_checks import (
     BrowserEvidence,
     ResourceFailure,
@@ -627,6 +628,7 @@ def _incomplete_evidence(
             for selector in page.required_selectors
         ),
         forbidden_text_matches=(),
+        application_failure_codes=(),
         console_errors=(),
         page_exceptions=(),
         resource_failures=(),
@@ -931,6 +933,10 @@ class PlaywrightBrowserRunner:
                             required_selector_results=tuple(selector_results),
                             forbidden_text_matches=tuple(
                                 text for text in page.forbidden_text if text in body_text
+                            ),
+                            application_failure_codes=detect_application_failure_codes(
+                                body_text,
+                                shortcode_names=page.application_shortcodes,
                             ),
                             console_errors=tuple(console_errors),
                             page_exceptions=tuple(page_exceptions),
