@@ -8,7 +8,13 @@ from pathlib import Path
 import httpx
 import pytest
 
-from triage_agent.manifests import PageManifest, ViewportManifest
+from triage_agent.browser_checks import PluginAssertionResult
+from triage_agent.manifests import (
+    PageManifest,
+    PluginAssertionKind,
+    PluginAssertionManifest,
+    ViewportManifest,
+)
 from triage_agent.security import UnsafeTargetError
 
 
@@ -344,6 +350,153 @@ async def test_playwright_runner_captures_collapsed_required_geometry() -> None:
 
     assert evidence.required_selector_results[0].width == 0
     assert evidence.required_selector_results[0].height == 0
+
+
+async def test_playwright_runner_captures_satisfied_plugin_assertion() -> None:
+    async def resolver(host: str) -> set[str]:
+        return {"93.184.216.34"}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html; charset=utf-8"},
+            content=(
+                b"<form class=\"wpcf7-form\"><input name=\"your-email\">"
+                b"<input type=\"submit\"></form>"
+            ),
+        )
+
+    from triage_agent.browser_runner import PlaywrightBrowserRunner
+
+    viewport = ViewportManifest(id="desktop", width=1440, height=900, device_scale_factor=1.0)
+    page = PageManifest(
+        id="home",
+        url="https://example.com/",
+        viewports=(viewport,),
+        plugin_assertions=(
+            PluginAssertionManifest(
+                id="contact-form",
+                kind="contact-form-7",
+                required_selectors=("form.wpcf7-form", "input[name=\"your-email\"]"),
+            ),
+        ),
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        evidence = await PlaywrightBrowserRunner(client=client, resolver=resolver).run(
+            page=page,
+            viewport=viewport,
+            allowed_hosts={"example.com"},
+        )
+
+    assert evidence.plugin_assertion_results == (
+        PluginAssertionResult(assertion_id="contact-form", kind="contact-form-7", satisfied=True),
+    )
+
+
+@pytest.mark.parametrize(
+    ("body", "description"),
+    [
+        (b"<p>No form here</p>", "missing selector"),
+        (
+            b"<form class=\"wpcf7-form\" style=\"display:none\">"
+            b"<input name=\"your-email\"></form>",
+            "hidden selector",
+        ),
+        (
+            b"<style>.wpcf7-form{width:0;height:0;overflow:hidden}</style>"
+            b"<form class=\"wpcf7-form\"><input name=\"your-email\"></form>",
+            "zero-geometry selector",
+        ),
+    ],
+    ids=["missing", "hidden", "zero-geometry"],
+)
+async def test_playwright_runner_captures_failed_plugin_assertion(
+    body: bytes,
+    description: str,
+) -> None:
+    async def resolver(host: str) -> set[str]:
+        return {"93.184.216.34"}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html; charset=utf-8"},
+            content=body,
+        )
+
+    from triage_agent.browser_runner import PlaywrightBrowserRunner
+
+    viewport = ViewportManifest(id="desktop", width=1440, height=900, device_scale_factor=1.0)
+    page = PageManifest(
+        id="home",
+        url="https://example.com/",
+        viewports=(viewport,),
+        plugin_assertions=(
+            PluginAssertionManifest(
+                id="contact-form",
+                kind="contact-form-7",
+                required_selectors=("form.wpcf7-form", "input[name=\"your-email\"]"),
+            ),
+        ),
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        evidence = await PlaywrightBrowserRunner(client=client, resolver=resolver).run(
+            page=page,
+            viewport=viewport,
+            allowed_hosts={"example.com"},
+        )
+
+    assert evidence.plugin_assertion_results == (
+        PluginAssertionResult(assertion_id="contact-form", kind="contact-form-7", satisfied=False),
+    ), description
+
+
+@pytest.mark.parametrize(
+    ("kind", "selector"),
+    [
+        ("elementor", ".elementor-section"),
+        ("contact-form-7", ".wpcf7-form"),
+        ("woocommerce", ".woocommerce-product"),
+        ("gallery-slider", ".slick-slide"),
+        ("search", ".search-results"),
+        ("multilingual", ".language-switcher"),
+    ],
+)
+async def test_playwright_runner_captures_plugin_assertions_for_every_supported_kind(
+    kind: PluginAssertionKind,
+    selector: str,
+) -> None:
+    async def resolver(host: str) -> set[str]:
+        return {"93.184.216.34"}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html; charset=utf-8"},
+            content=f'<div class="{selector.removeprefix(".")}">rendered</div>'.encode(),
+        )
+
+    from triage_agent.browser_runner import PlaywrightBrowserRunner
+
+    viewport = ViewportManifest(id="desktop", width=1440, height=900, device_scale_factor=1.0)
+    page = PageManifest(
+        id="home",
+        url="https://example.com/",
+        viewports=(viewport,),
+        plugin_assertions=(
+            PluginAssertionManifest(id="assertion", kind=kind, required_selectors=(selector,)),
+        ),
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        evidence = await PlaywrightBrowserRunner(client=client, resolver=resolver).run(
+            page=page,
+            viewport=viewport,
+            allowed_hosts={"example.com"},
+        )
+
+    assert evidence.plugin_assertion_results == (
+        PluginAssertionResult(assertion_id="assertion", kind=kind, satisfied=True),
+    )
 
 
 async def test_playwright_runner_captures_console_and_page_errors() -> None:

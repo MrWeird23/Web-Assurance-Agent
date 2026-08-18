@@ -1,10 +1,12 @@
 from dataclasses import replace
-from typing import cast
+from typing import cast, get_args
 
 import pytest
 
 from triage_agent.browser_checks import (
+    PLUGIN_ASSERTION_KINDS,
     BrowserEvidence,
+    PluginAssertionResult,
     ResourceFailure,
     ScreenshotArtifact,
     SelectorResult,
@@ -12,6 +14,7 @@ from triage_agent.browser_checks import (
     Viewport,
     evaluate_browser_evidence,
 )
+from triage_agent.manifests import PluginAssertionKind
 
 
 def healthy_evidence() -> BrowserEvidence:
@@ -35,6 +38,7 @@ def healthy_evidence() -> BrowserEvidence:
         ),
         forbidden_text_matches=(),
         application_failure_codes=(),
+        plugin_assertion_results=(),
         console_errors=(),
         page_exceptions=(),
         resource_failures=(),
@@ -81,6 +85,63 @@ def test_unknown_application_failure_code_invalidates_evidence() -> None:
 
     assert result.healthy is False
     assert [finding.code for finding in result.failures] == ["invalid_browser_evidence"]
+
+
+def test_failed_plugin_assertion_fails_with_stable_code() -> None:
+    evidence = replace(
+        healthy_evidence(),
+        plugin_assertion_results=(
+            PluginAssertionResult(
+                assertion_id="contact-form",
+                kind="contact-form-7",
+                satisfied=False,
+            ),
+        ),
+    )
+
+    result = evaluate_browser_evidence(evidence)
+
+    assert result.healthy is False
+    assert [(finding.code, finding.message) for finding in result.failures] == [
+        ("plugin_assertion_failed", "Plugin assertion failed: contact-form")
+    ]
+
+
+def test_satisfied_plugin_assertion_remains_healthy() -> None:
+    evidence = replace(
+        healthy_evidence(),
+        plugin_assertion_results=(
+            PluginAssertionResult(
+                assertion_id="product-component",
+                kind="woocommerce",
+                satisfied=True,
+            ),
+        ),
+    )
+
+    assert evaluate_browser_evidence(evidence).healthy is True
+
+
+def test_unsupported_plugin_assertion_kind_invalidates_evidence() -> None:
+    evidence = replace(
+        healthy_evidence(),
+        plugin_assertion_results=(
+            PluginAssertionResult(
+                assertion_id="contact-form",
+                kind="arbitrary-plugin",
+                satisfied=True,
+            ),
+        ),
+    )
+
+    result = evaluate_browser_evidence(evidence)
+
+    assert result.healthy is False
+    assert [finding.code for finding in result.failures] == ["invalid_browser_evidence"]
+
+
+def test_plugin_assertion_kinds_match_the_manifest_schema() -> None:
+    assert frozenset(get_args(PluginAssertionKind)) == PLUGIN_ASSERTION_KINDS
 
 
 def test_missing_required_selector_fails() -> None:

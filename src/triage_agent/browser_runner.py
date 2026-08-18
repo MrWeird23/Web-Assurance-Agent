@@ -25,6 +25,7 @@ from triage_agent import __version__
 from triage_agent.application_signatures import detect_application_failure_codes
 from triage_agent.browser_checks import (
     BrowserEvidence,
+    PluginAssertionResult,
     ResourceFailure,
     ScreenshotArtifact,
     SelectorResult,
@@ -629,6 +630,7 @@ def _incomplete_evidence(
         ),
         forbidden_text_matches=(),
         application_failure_codes=(),
+        plugin_assertion_results=(),
         console_errors=(),
         page_exceptions=(),
         resource_failures=(),
@@ -873,6 +875,25 @@ class PlaywrightBrowserRunner:
                                     height=float(box["height"]) if box is not None else 0,
                                 )
                             )
+                        plugin_assertion_results: list[PluginAssertionResult] = []
+                        for assertion in page.plugin_assertions:
+                            satisfied = True
+                            for selector in assertion.required_selectors:
+                                locator = browser_page.locator(selector).first
+                                if await locator.count() == 0 or not await locator.is_visible():
+                                    satisfied = False
+                                    break
+                                box = await locator.bounding_box()
+                                if box is None or box["width"] <= 0 or box["height"] <= 0:
+                                    satisfied = False
+                                    break
+                            plugin_assertion_results.append(
+                                PluginAssertionResult(
+                                    assertion_id=assertion.id,
+                                    kind=assertion.kind,
+                                    satisfied=satisfied,
+                                )
+                            )
                         screenshot: ScreenshotArtifact | None = None
                         if self.artifact_directory is not None:
                             _validate_screenshot_viewport(viewport)
@@ -938,6 +959,7 @@ class PlaywrightBrowserRunner:
                                 body_text,
                                 shortcode_names=page.application_shortcodes,
                             ),
+                            plugin_assertion_results=tuple(plugin_assertion_results),
                             console_errors=tuple(console_errors),
                             page_exceptions=tuple(page_exceptions),
                             resource_failures=tuple(resource_failures),

@@ -106,6 +106,22 @@ class InteractionManifest(StrictManifestModel):
     enabled: StrictBool = False
 
 
+PluginAssertionKind = Literal[
+    "elementor",
+    "contact-form-7",
+    "woocommerce",
+    "gallery-slider",
+    "search",
+    "multilingual",
+]
+
+
+class PluginAssertionManifest(StrictManifestModel):
+    id: Identifier
+    kind: PluginAssertionKind
+    required_selectors: tuple[NonEmptyText, ...] = Field(min_length=1, max_length=20)
+
+
 class PageManifest(StrictManifestModel):
     id: Identifier
     url: NonEmptyText
@@ -117,6 +133,7 @@ class PageManifest(StrictManifestModel):
     ignored_resource_patterns: tuple[NonEmptyText, ...] = Field(default=(), max_length=100)
     screenshot_masks: tuple[NonEmptyText, ...] = Field(default=(), max_length=100)
     application_shortcodes: tuple[ShortcodeName, ...] = Field(default=(), max_length=20)
+    plugin_assertions: tuple[PluginAssertionManifest, ...] = Field(default=(), max_length=20)
     interactions: tuple[InteractionManifest, ...] = Field(default=(), max_length=20)
 
 
@@ -207,6 +224,11 @@ def parse_site_manifest(text: str) -> ManifestRegistry:
         viewport_ids = [viewport.id for viewport in page.viewports]
         if len(viewport_ids) != len(set(viewport_ids)):
             raise ValueError("Invalid site manifest: duplicate viewport ID")
+
+    for page in page_list:
+        plugin_assertion_ids = [assertion.id for assertion in page.plugin_assertions]
+        if len(plugin_assertion_ids) != len(set(plugin_assertion_ids)):
+            raise ValueError("Invalid site manifest: duplicate plugin assertion ID")
 
     page_ids = [page.id for page in page_list]
     if len(page_ids) != len(set(page_ids)):

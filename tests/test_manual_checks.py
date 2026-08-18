@@ -1,10 +1,12 @@
 import asyncio
+from dataclasses import replace
 
 import httpx
 
 from triage_agent.api import create_app
 from triage_agent.browser_checks import (
     BrowserEvidence,
+    PluginAssertionResult,
     ScreenshotArtifact,
     SelectorResult,
     TextResult,
@@ -66,6 +68,7 @@ class StubPageChecker:
             ),
             forbidden_text_matches=(),
             application_failure_codes=(),
+            plugin_assertion_results=(),
             console_errors=(),
             page_exceptions=(),
             resource_failures=(),
@@ -100,6 +103,50 @@ class BlockingPageChecker(StubPageChecker):
             viewport=viewport,
             allowed_hosts=allowed_hosts,
         )
+
+
+class PluginAssertionFailingPageChecker(StubPageChecker):
+    async def run(
+        self,
+        *,
+        page: PageManifest,
+        viewport: ViewportManifest,
+        allowed_hosts: set[str],
+    ) -> BrowserEvidence:
+        evidence = await super().run(page=page, viewport=viewport, allowed_hosts=allowed_hosts)
+        return replace(
+            evidence,
+            plugin_assertion_results=(
+                PluginAssertionResult(
+                    assertion_id="contact-form",
+                    kind="contact-form-7",
+                    satisfied=False,
+                ),
+            ),
+        )
+
+
+async def test_manual_check_reports_failed_plugin_assertion_ids_without_selectors() -> None:
+    checker = PluginAssertionFailingPageChecker()
+    app = create_app(
+        engine=StubEngine(),
+        webhook_token="expected-secret",
+        manifest_registry=parse_site_manifest(MANIFEST),
+        page_checker=checker,
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.post(
+            "/checks/pages/home", headers={"X-Triage-Token": "expected-secret"}
+        )
+
+    payload = response.json()
+    assert payload["classification"] == "failed"
+    assert payload["evidence"]["failure_codes"] == ["plugin_assertion_failed"]
+    assert payload["evidence"]["failed_plugin_assertions"] == ["contact-form"]
+    assert "wpcf7" not in str(payload)
+    assert "selector" not in str(payload).lower()
 
 
 async def test_manual_check_requires_same_authentication_boundary() -> None:
@@ -162,6 +209,7 @@ async def test_manual_check_runs_only_manifest_page_and_returns_concise_evidence
         "viewports_checked": 2,
         "failed_viewports": [],
         "failure_codes": [],
+        "failed_plugin_assertions": [],
     }
     assert payload["artifacts"] == ["home/desktop.png", "home/desktop.png"]
     assert checker.calls == [

@@ -38,6 +38,13 @@ sites:
           - .dynamic-banner
         application_shortcodes:
           - contact-form-7
+        plugin_assertions:
+          - id: contact-form
+            kind: contact-form-7
+            required_selectors:
+              - form.wpcf7-form
+              - input[name="your-email"]
+              - input[type="submit"]
         interactions:
           - action: click
             selector: button[aria-expanded="false"]
@@ -52,6 +59,13 @@ def test_parses_valid_declarative_site_manifest() -> None:
     assert [viewport.id for viewport in page.viewports] == ["desktop", "mobile"]
     assert page.required_selectors == ("main",)
     assert page.application_shortcodes == ("contact-form-7",)
+    assert page.plugin_assertions[0].id == "contact-form"
+    assert page.plugin_assertions[0].kind == "contact-form-7"
+    assert page.plugin_assertions[0].required_selectors == (
+        "form.wpcf7-form",
+        'input[name="your-email"]',
+        'input[type="submit"]',
+    )
     assert page.interactions[0].enabled is False
     assert registry.allowed_hosts("home") == frozenset({"example.com"})
 
@@ -125,6 +139,27 @@ def test_rejects_duplicate_viewport_ids_within_page() -> None:
 
     with pytest.raises(ValueError, match="Invalid site manifest"):
         parse_site_manifest(duplicate_viewports)
+
+
+def test_rejects_duplicate_plugin_assertion_ids_within_page() -> None:
+    duplicate_assertion = VALID_MANIFEST.replace(
+        "        interactions:",
+        "          - id: contact-form\n"
+        "            kind: woocommerce\n"
+        "            required_selectors:\n"
+        "              - .woocommerce-product\n"
+        "        interactions:",
+    )
+
+    with pytest.raises(ValueError, match="Invalid site manifest"):
+        parse_site_manifest(duplicate_assertion)
+
+
+def test_rejects_unsupported_plugin_assertion_kind() -> None:
+    unsupported_kind = VALID_MANIFEST.replace("kind: contact-form-7", "kind: unknown-plugin")
+
+    with pytest.raises(ValueError, match="Invalid site manifest"):
+        parse_site_manifest(unsupported_kind)
 
 
 def test_rejects_unknown_fields_including_unapproved_visual_baseline() -> None:

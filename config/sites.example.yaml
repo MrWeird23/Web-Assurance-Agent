@@ -28,4 +28,19 @@ sites:
         screenshot_masks: []
         # Opt in only for shortcodes that should render on this page.
         application_shortcodes: []
+        # Opt in only for plugin components that must render on this page.
+        # Each entry asserts one or more selectors exist, are visible, and have
+        # non-zero geometry. It proves the component rendered, not that every
+        # feature behind it works. Only the first DOM match per selector is
+        # checked, so selectors should uniquely identify one rendered element
+        # on this page (e.g. avoid a class shared by a hidden mobile duplicate).
+        plugin_assertions: []
+        # Example, for a page carrying a Contact Form 7 form:
+        # plugin_assertions:
+        #   - id: contact-form
+        #     kind: contact-form-7
+        #     required_selectors:
+        #       - form.wpcf7-form
+        #       - input[name="your-email"]
+        #       - input[type="submit"]
         interactions: []

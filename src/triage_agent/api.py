@@ -117,6 +117,14 @@ def create_app(
             failure_codes = sorted(
                 {finding.code for evaluation in evaluations for finding in evaluation.failures}
             )
+            failed_plugin_assertions = sorted(
+                {
+                    result.assertion_id
+                    for item in evidence
+                    for result in item.plugin_assertion_results
+                    if not result.satisfied
+                }
+            )
             return {
                 "check_id": secrets.token_hex(16),
                 "page_id": page.id,
@@ -125,6 +133,7 @@ def create_app(
                     "viewports_checked": len(evidence),
                     "failed_viewports": failed_viewports,
                     "failure_codes": failure_codes,
+                    "failed_plugin_assertions": failed_plugin_assertions,
                 },
                 "artifacts": [
                     item.screenshot.path for item in evidence if item.screenshot is not None

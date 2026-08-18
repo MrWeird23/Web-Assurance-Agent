@@ -9,8 +9,8 @@ Uptime Kuma remains the fast deterministic outage detector. This service receive
 > strict declarative page manifests, and an isolated Playwright/Chromium runner with
 > deterministic browser evidence. An authenticated manual endpoint can invoke checks for
 > manifest-defined pages, including narrow detection of visible WordPress and PHP failure
-> signatures; scheduling, plugin-specific assertions, synthetic journeys, and
-> visual regression remain planned in [ROADMAP.md](ROADMAP.md).
+> signatures and opt-in plugin-specific rendered-state assertions; scheduling, synthetic
+> journeys, and visual regression remain planned in [ROADMAP.md](ROADMAP.md).
 
 ## Why this exists
 
@@ -63,6 +63,12 @@ only shortcode names that are expected to render on that specific page.
     origin.
 16. Invoke a manifest-defined page manually through `POST /checks/pages/{page_id}` using the
     existing `X-Triage-Token` authentication boundary. Arbitrary request URLs are not accepted.
+17. Assert, opt-in per page, that declared plugin components actually rendered — Elementor,
+    Contact Form 7, WooCommerce, gallery/slider, search, and multilingual components each
+    declare required CSS selectors that must exist, be visible, and have non-zero geometry.
+    A failed assertion reports the stable `plugin_assertion_failed` code and the assertion ID,
+    never the selector or page content. This is read-only rendered-state inspection; no form
+    submission, cart mutation, checkout, or content change occurs.
 
 ## Safety model
 
@@ -276,7 +282,8 @@ docker build -t web-assurance-agent:local .
 - The isolated browser runner is not yet wired to an API endpoint or scheduler.
 - Screenshot capture requires an explicit artifact directory; production retention policy,
   screenshot comparison, and human-approved baseline management are not yet implemented.
-- WordPress/plugin checks and synthetic interactions are not yet implemented.
+- Plugin-specific rendered-state assertions are implemented; safe synthetic interactions
+  (opening menus, expanding accordions, advancing sliders) are not yet implemented.
 - No automatic remediation exists or is planned for the initial milestones.
 
 See [ROADMAP.md](ROADMAP.md) for the controlled path to application-level assurance.

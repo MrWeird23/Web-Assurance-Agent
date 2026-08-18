@@ -25,6 +25,13 @@ class SelectorResult:
 
 
 @dataclass(frozen=True, slots=True)
+class PluginAssertionResult:
+    assertion_id: str
+    kind: str
+    satisfied: bool
+
+
+@dataclass(frozen=True, slots=True)
 class ResourceFailure:
     url: str
     status_code: int | None
@@ -54,6 +61,7 @@ class BrowserEvidence:
     required_selector_results: tuple[SelectorResult, ...]
     forbidden_text_matches: tuple[str, ...]
     application_failure_codes: tuple[str, ...]
+    plugin_assertion_results: tuple[PluginAssertionResult, ...]
     console_errors: tuple[str, ...]
     page_exceptions: tuple[str, ...]
     resource_failures: tuple[ResourceFailure, ...]
@@ -88,6 +96,16 @@ APPLICATION_FAILURE_CODES = frozenset(
         "wordpress_database_connection_failure",
         "wordpress_maintenance_mode",
         "wordpress_unrendered_shortcode",
+    }
+)
+PLUGIN_ASSERTION_KINDS = frozenset(
+    {
+        "elementor",
+        "contact-form-7",
+        "woocommerce",
+        "gallery-slider",
+        "search",
+        "multilingual",
     }
 )
 
@@ -129,6 +147,7 @@ def _is_valid_evidence(evidence: BrowserEvidence) -> bool:
             evidence.required_selector_results,
             evidence.forbidden_text_matches,
             evidence.application_failure_codes,
+            evidence.plugin_assertion_results,
             evidence.console_errors,
             evidence.page_exceptions,
             evidence.resource_failures,
@@ -194,6 +213,16 @@ def _is_valid_evidence(evidence: BrowserEvidence) -> bool:
     ):
         return False
     if any(code not in APPLICATION_FAILURE_CODES for code in evidence.application_failure_codes):
+        return False
+    if any(
+        type(result) is not PluginAssertionResult
+        or type(result.assertion_id) is not str
+        or not result.assertion_id
+        or type(result.kind) is not str
+        or result.kind not in PLUGIN_ASSERTION_KINDS
+        or type(result.satisfied) is not bool
+        for result in evidence.plugin_assertion_results
+    ):
         return False
     if any(
         type(resource) is not ResourceFailure
@@ -306,6 +335,14 @@ def evaluate_browser_evidence(evidence: BrowserEvidence) -> BrowserEvaluation:
             message=f"Detected application failure: {failure_code}",
         )
         for failure_code in evidence.application_failure_codes
+    )
+    failures.extend(
+        BrowserFinding(
+            code="plugin_assertion_failed",
+            message=f"Plugin assertion failed: {result.assertion_id}",
+        )
+        for result in evidence.plugin_assertion_results
+        if not result.satisfied
     )
     failures.extend(
         BrowserFinding(
