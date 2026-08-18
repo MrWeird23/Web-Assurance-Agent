@@ -311,6 +311,20 @@ Policy:
 
 ### 3.3 Human-approved baselines
 
+**Status:** complete in `0.3.0`
+
+`BaselineStore` (`src/triage_agent/baselines.py`) is a filesystem-backed store, independent of
+`visual_diff.py` and not yet wired into it or into `BrowserEvidence`. `capture()` writes a screenshot
+to `pending/` and records its hash and capture time but never makes it a usable baseline. Only
+`approve()` — given an operator label — copies that capture into `approved/` and appends an
+immutable record (page ID, viewport, hash, capture time, operator label, approval time) to an
+append-only `audit.jsonl`; `current()` reads the latest such record per page/viewport, and
+`history()` returns the full trail. Replacing an approved baseline is just another capture+approve
+cycle, so every replacement is itself an audit record — nothing is ever overwritten or deleted.
+`approved/` and `pending/` are separate subdirectories, distinct from wherever a caller stores
+incident/current-run screenshots. Page and viewport identifiers are validated against the same
+`[a-z0-9]+(-[a-z0-9]+)*` shape as manifest IDs, closing off path traversal through crafted IDs.
+
 - first capture is `baseline_pending`;
 - no automatic baseline acceptance;
 - approval records page ID, viewport, hash, capture time, and operator label;
