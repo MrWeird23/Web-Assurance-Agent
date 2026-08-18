@@ -8,7 +8,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from triage_agent.browser_checks import InteractionResult, PluginAssertionResult
+from triage_agent.browser_checks import InteractionResult, PluginAssertionResult, TextResult
 from triage_agent.manifests import (
     InteractionManifest,
     PageManifest,
@@ -312,6 +312,58 @@ async def test_playwright_runner_captures_intercepted_healthy_page() -> None:
     assert evidence.page_width > 0
     assert evidence.page_height > 0
     assert evidence.browser_version != ""
+
+
+async def test_playwright_runner_captures_evidence_despite_strict_style_csp() -> None:
+    async def resolver(host: str) -> set[str]:
+        assert host == "example.com"
+        return {"93.184.216.34"}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.host == "93.184.216.34"
+        return httpx.Response(
+            200,
+            headers={
+                "content-type": "text/html; charset=utf-8",
+                "content-security-policy": "style-src 'self'",
+            },
+            content=(b"<!doctype html><title>Fixture</title><main><h1>Welcome</h1></main>"),
+        )
+
+    from triage_agent.browser_runner import PlaywrightBrowserRunner
+
+    page = PageManifest(
+        id="home",
+        url="https://example.com/",
+        viewports=(
+            ViewportManifest(
+                id="desktop",
+                width=1440,
+                height=900,
+                device_scale_factor=1.0,
+            ),
+        ),
+        required_text=("Welcome",),
+        required_selectors=("main",),
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        evidence = await PlaywrightBrowserRunner(
+            client=client,
+            resolver=resolver,
+        ).run(
+            page=page,
+            viewport=page.viewports[0],
+            allowed_hosts={"example.com"},
+        )
+
+    # A style-src CSP blocks our best-effort scroll-behavior/animation CSS
+    # injection; that must not abort evidence collection for the rest of the
+    # page (screenshot suppression already happens CSP-safely via the
+    # `animations`/`caret` screenshot options).
+    assert evidence.timed_out is False
+    assert evidence.document_status == 200
+    assert evidence.title == "Fixture"
+    assert evidence.required_text_results == (TextResult(value="Welcome", found=True),)
 
 
 async def test_playwright_runner_waits_for_ready_selector_before_capturing() -> None:
