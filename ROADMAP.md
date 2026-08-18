@@ -259,7 +259,7 @@ Deferred pending separate approval:
 
 ### 3.1 Deterministic screenshot normalization
 
-**Status:** complete in `0.2.0`
+**Status:** complete in `0.3.0`
 
 - wait for declared ready selectors, fonts, and images;
 - disable animations, transitions, caret, and smooth scrolling;
@@ -274,6 +274,20 @@ now also records the full document's scroll dimensions (`page_width`/`page_heigh
 the fixed viewport) and the Chromium `browser_version` actually used.
 
 ### 3.2 Perceptual comparison
+
+**Status:** complete in `0.3.0`
+
+`compare_screenshots` decodes baseline/current PNG bytes with Pillow and computes a normalized
+perceptual difference score (mean per-pixel luma delta, 0.0-1.0) and a changed-pixel percentage
+(delta above a per-pixel tolerance, ignoring anti-aliasing noise) purely from the diff image's
+histogram — no per-pixel Python loop. Changed regions are found by flagging a coarse tile grid and
+merging adjacent flagged tiles into bounding boxes; a dimension mismatch between baseline and
+current is treated as a maximal, whole-page difference rather than raised as an error. The function
+is a pure, standalone comparison: it takes screenshot bytes and path references in, and returns a
+`VisualDiffResult` (score, percentage, regions, a highlighted diff PNG, and `exceeds_threshold`
+against a caller-supplied per-page/per-viewport threshold) — it does not read or write baselines,
+and is not yet wired into `BrowserEvidence` or the runner, since baseline storage and approval
+belong to 3.3. `exceeds_threshold` is evidence for the caller to classify, not an automatic outage.
 
 Planned files:
 
