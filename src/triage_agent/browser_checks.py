@@ -1,3 +1,4 @@
+from collections.abc import Iterable
 from dataclasses import dataclass
 from math import isfinite
 
@@ -466,3 +467,58 @@ def evaluate_browser_evidence(evidence: BrowserEvidence) -> BrowserEvaluation:
         failures=tuple(failures),
         information=tuple(information),
     )
+
+
+_RENDER_FAILURE_CODES = frozenset(
+    {"invalid_browser_evidence", "browser_timeout", "document_failure"}
+)
+_JAVASCRIPT_FAILURE_CODES = frozenset({"console_error", "page_exception"})
+_FUNCTIONAL_REGRESSION_CODES = frozenset(
+    {
+        "required_text_missing",
+        "required_selector_missing",
+        "required_selector_not_visible",
+        "required_selector_zero_geometry",
+        "plugin_assertion_failed",
+        "interaction_failed",
+    }
+)
+_VISUAL_REGRESSION_CODES = frozenset({"visual_regression", "visual_evaluation_failed"})
+_WORDPRESS_ERROR_PAGE_CODES = frozenset({"application_failure", "forbidden_text_match"})
+# Priority order: the first matching classification wins when a check has several
+# simultaneous failure kinds, most severe/actionable first.
+_CLASSIFICATION_PRIORITY = (
+    "render_failure",
+    "wordpress_error_page",
+    "critical_resource_failure",
+    "javascript_failure",
+    "functional_regression",
+    "visual_regression",
+    "baseline_pending",
+)
+
+
+def classify_check(failure_codes: Iterable[str], *, baseline_pending: bool = False) -> str:
+    """Reduce a check's failure codes to one overall classification for reporting."""
+    codes = set(failure_codes)
+    present = set()
+    if codes & _RENDER_FAILURE_CODES:
+        present.add("render_failure")
+    if codes & _WORDPRESS_ERROR_PAGE_CODES or any(
+        code.startswith("wordpress_") for code in codes
+    ):
+        present.add("wordpress_error_page")
+    if "critical_resource_failure" in codes:
+        present.add("critical_resource_failure")
+    if codes & _JAVASCRIPT_FAILURE_CODES:
+        present.add("javascript_failure")
+    if codes & _FUNCTIONAL_REGRESSION_CODES:
+        present.add("functional_regression")
+    if codes & _VISUAL_REGRESSION_CODES:
+        present.add("visual_regression")
+    if baseline_pending:
+        present.add("baseline_pending")
+    for classification in _CLASSIFICATION_PRIORITY:
+        if classification in present:
+            return classification
+    return "healthy"

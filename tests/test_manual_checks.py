@@ -199,7 +199,7 @@ async def test_manual_check_reports_failed_plugin_assertion_ids_without_selector
         )
 
     payload = response.json()
-    assert payload["classification"] == "failed"
+    assert payload["classification"] == "functional_regression"
     assert payload["evidence"]["failure_codes"] == ["plugin_assertion_failed"]
     assert payload["evidence"]["failed_plugin_assertions"] == ["contact-form"]
     assert "wpcf7" not in str(payload)
@@ -338,7 +338,7 @@ async def test_manual_check_returns_concise_wordpress_health_evidence() -> None:
 
     payload = response.json()
     assert response.status_code == 200
-    assert payload["classification"] == "failed"
+    assert payload["classification"] == "wordpress_error_page"
     assert payload["evidence"]["failure_codes"] == [
         "wordpress_core_update_available",
         "wordpress_cron_overdue",
@@ -423,4 +423,4 @@ async def test_wordpress_alert_delivery_failure_does_not_fail_manual_check() -> 
         )
 
     assert response.status_code == 200
-    assert response.json()["classification"] == "failed"
+    assert response.json()["classification"] == "wordpress_error_page"

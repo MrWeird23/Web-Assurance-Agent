@@ -14,6 +14,7 @@ from triage_agent.browser_checks import (
     TextResult,
     Viewport,
     VisualAssuranceResult,
+    classify_check,
     evaluate_browser_evidence,
 )
 from triage_agent.manifests import PluginAssertionKind
@@ -488,3 +489,42 @@ def test_malformed_nested_browser_evidence_fails_closed(
 
     assert result.healthy is False
     assert [finding.code for finding in result.failures] == ["invalid_browser_evidence"]
+
+
+def test_classify_check_is_healthy_with_no_failures_and_no_pending_baseline() -> None:
+    assert classify_check([]) == "healthy"
+
+
+def test_classify_check_reports_baseline_pending_when_otherwise_healthy() -> None:
+    assert classify_check([], baseline_pending=True) == "baseline_pending"
+
+
+@pytest.mark.parametrize(
+    ("codes", "expected"),
+    [
+        (["document_failure"], "render_failure"),
+        (["browser_timeout"], "render_failure"),
+        (["application_failure"], "wordpress_error_page"),
+        (["forbidden_text_match"], "wordpress_error_page"),
+        (["wordpress_health_fatal_error"], "wordpress_error_page"),
+        (["critical_resource_failure"], "critical_resource_failure"),
+        (["console_error"], "javascript_failure"),
+        (["page_exception"], "javascript_failure"),
+        (["required_text_missing"], "functional_regression"),
+        (["interaction_failed"], "functional_regression"),
+        (["visual_regression"], "visual_regression"),
+        (["visual_evaluation_failed"], "visual_regression"),
+    ],
+)
+def test_classify_check_maps_each_failure_code(codes: list[str], expected: str) -> None:
+    assert classify_check(codes) == expected
+
+
+def test_classify_check_prioritizes_render_failure_over_everything_else() -> None:
+    codes = ["visual_regression", "console_error", "document_failure", "application_failure"]
+
+    assert classify_check(codes) == "render_failure"
+
+
+def test_classify_check_ignores_baseline_pending_when_a_real_failure_exists() -> None:
+    assert classify_check(["console_error"], baseline_pending=True) == "javascript_failure"

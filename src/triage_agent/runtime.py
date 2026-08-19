@@ -119,7 +119,7 @@ def build_app(settings: Settings) -> FastAPI:
                 wordpress_health_checker=wordpress_health_checker,
                 wordpress_alert_publisher=publisher,
             )
-            if result["classification"] == "failed":
+            if result["classification"] not in ("healthy", "baseline_pending"):
                 try:
                     await publisher(
                         render_browser_check_discord_payload(

@@ -281,6 +281,26 @@ Scheduled checks share the same global/per-site concurrency budgets as manual ch
 (`TRIAGE_SCHEDULER_GLOBAL_CONCURRENCY` / `TRIAGE_SCHEDULER_SITE_CONCURRENCY`), and each run is
 jittered to avoid every page waking up in lockstep.
 
+### Browser check classification
+
+Both `/checks/pages/{page_id}` and scheduled deep checks return a single `classification` field
+that reduces every collected failure code to one overall verdict, most severe first:
+
+| Classification | Meaning |
+| --- | --- |
+| `render_failure` | The page timed out, returned no document, or the evidence itself was invalid |
+| `wordpress_error_page` | A PHP/WordPress fatal error, forbidden error text, or WordPress health check failed |
+| `critical_resource_failure` | A resource marked critical in the manifest failed to load |
+| `javascript_failure` | A browser console error or uncaught page exception was recorded |
+| `functional_regression` | Required text/selectors were missing, or a plugin assertion/interaction failed |
+| `visual_regression` | The screenshot exceeded the approved visual diff threshold, or the comparison failed |
+| `baseline_pending` | No approved visual baseline exists yet; not treated as a failure |
+| `healthy` | No failures and no pending baseline |
+
+When several failure kinds occur in the same check, the table order above is the priority: e.g. a
+render failure is reported over a simultaneous JavaScript error. `baseline_pending` never overrides
+an actual failure and never triggers a scheduled deep-check Discord alert.
+
 Real `.env` files, pilot configuration, webhook tokens, credentials, and tunnel details must never be committed. The repository includes only `.env.example` placeholders.
 
 ## Additive Uptime Kuma integration

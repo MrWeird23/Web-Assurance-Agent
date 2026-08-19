@@ -9,7 +9,7 @@ from typing import Any, Protocol
 from fastapi import FastAPI, HTTPException, Request
 
 from triage_agent import __version__
-from triage_agent.browser_checks import BrowserEvidence, evaluate_browser_evidence
+from triage_agent.browser_checks import BrowserEvidence, classify_check, evaluate_browser_evidence
 from triage_agent.discord import DiscordPublishError
 from triage_agent.manifests import ManifestRegistry, PageManifest, ViewportManifest
 from triage_agent.wordpress_health import WordPressHealthResult
@@ -194,10 +194,15 @@ async def run_page_check(
             if not result.satisfied
         }
     )
+    baseline_pending = any(
+        finding.code == "baseline_pending"
+        for evaluation in evaluations
+        for finding in evaluation.information
+    )
     return {
         "check_id": secrets.token_hex(16),
         "page_id": page.id,
-        "classification": "failed" if failure_codes else "healthy",
+        "classification": classify_check(failure_codes, baseline_pending=baseline_pending),
         "evidence": {
             "viewports_checked": len(evidence),
             "failed_viewports": failed_viewports,
