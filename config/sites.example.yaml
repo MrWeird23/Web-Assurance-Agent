@@ -11,6 +11,8 @@ sites:
             width: 1440
             height: 900
             device_scale_factor: 1.0
+            # Omit to disable visual comparison for this viewport.
+            visual_threshold_percentage: 1.0
           - id: mobile
             width: 390
             height: 844

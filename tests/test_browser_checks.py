@@ -13,6 +13,7 @@ from triage_agent.browser_checks import (
     SelectorResult,
     TextResult,
     Viewport,
+    VisualAssuranceResult,
     evaluate_browser_evidence,
 )
 from triage_agent.manifests import PluginAssertionKind
@@ -64,6 +65,39 @@ def test_healthy_browser_evidence_evaluates_healthy() -> None:
     assert result.healthy is True
     assert result.failures == ()
     assert result.information == ()
+
+
+def test_unavailable_visual_evaluation_fails_without_aborting_browser_evidence() -> None:
+    evidence = replace(
+        healthy_evidence(),
+        visual_assurance=VisualAssuranceResult(
+            status="unavailable",
+            exceeds_threshold=False,
+            changed_pixel_percentage=None,
+            changed_region_count=0,
+        ),
+    )
+
+    result = evaluate_browser_evidence(evidence)
+
+    assert result.healthy is False
+    assert [finding.code for finding in result.failures] == ["visual_evaluation_failed"]
+
+
+def test_contradictory_visual_evidence_is_invalid() -> None:
+    evidence = replace(
+        healthy_evidence(),
+        visual_assurance=VisualAssuranceResult(
+            status="matched",
+            exceeds_threshold=True,
+            changed_pixel_percentage=0.0,
+            changed_region_count=0,
+        ),
+    )
+
+    result = evaluate_browser_evidence(evidence)
+
+    assert [finding.code for finding in result.failures] == ["invalid_browser_evidence"]
 
 
 def test_detected_application_failure_code_fails_without_exposing_page_text() -> None:

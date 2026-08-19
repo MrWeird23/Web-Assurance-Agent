@@ -331,6 +331,19 @@ incident/current-run screenshots. Page and viewport identifiers are validated ag
 - replacement requires an explicit action and audit record;
 - approved baselines and incident artifacts are stored separately.
 
+### 3.4 End-to-end visual evaluation
+
+**Status:** complete in `0.3.0`
+
+Manifest viewports may opt into visual comparison with a bounded
+`visual_threshold_percentage`. The runtime decorates the existing read-only Playwright checker with
+`VisualPageChecker`, loads only human-approved baselines from the separately mounted baseline store,
+and evaluates the current screenshot with the perceptual comparison from 3.2. A missing approved
+baseline produces informational `baseline_pending` evidence and never auto-accepts the current
+capture. A comparison above threshold produces the stable `visual_regression` failure; matching
+captures remain healthy. Browser evidence exposes only status, changed-pixel percentage, and a
+bounded changed-region count — no baseline bytes or raw image content.
+
 ## Milestone 4 — Read-only WordPress administrative health
 
 **Prerequisite:** explicit authorization for each site and access method.

@@ -5,12 +5,13 @@ Web Assurance Agent is a read-only service that turns Uptime Kuma website events
 Uptime Kuma remains the fast deterministic outage detector. This service receives an authenticated event, confirms failures through tightly controlled HTTPS probes, classifies the result, suppresses duplicate reports, and either publishes a structured Discord embed or logs it in dry-run mode.
 
 > [!IMPORTANT]
-> The `0.2.0` development branch provides HTTP incident confirmation and reporting,
+> The `0.3.0` development branch provides HTTP incident confirmation and reporting,
 > strict declarative page manifests, and an isolated Playwright/Chromium runner with
 > deterministic browser evidence. An authenticated manual endpoint can invoke checks for
 > manifest-defined pages, including narrow detection of visible WordPress and PHP failure
-> signatures and opt-in plugin-specific rendered-state assertions; scheduling, synthetic
-> journeys, and visual regression remain planned in [ROADMAP.md](ROADMAP.md).
+> signatures, opt-in plugin-specific rendered-state assertions, safe interactions, and
+> human-approved visual regression. Scheduling and administrative WordPress health remain planned
+> in [ROADMAP.md](ROADMAP.md).
 
 ## Why this exists
 
@@ -238,6 +239,7 @@ A production deployment should place the service behind an approved TLS reverse 
 | `TRIAGE_REQUEST_TIMEOUT_SECONDS` | No | `15` | Per-request timeout, from 1 to 60 seconds |
 | `TRIAGE_SITE_MANIFEST_PATH` | No | empty | Enables manifest-backed manual browser checks when set |
 | `TRIAGE_BROWSER_ARTIFACT_DIRECTORY` | No | empty | Directory for optional browser screenshot artifacts |
+| `TRIAGE_VISUAL_BASELINE_DIRECTORY` | No | empty | Directory containing separately stored human-approved visual baselines |
 | `TRIAGE_MANUAL_CHECK_CONCURRENCY` | No | `1` | Maximum simultaneous manual browser checks per service process, from 1 to 4; excess requests receive HTTP 429 |
 | `LOG_LEVEL` | No | `INFO` | Runtime log level |
 

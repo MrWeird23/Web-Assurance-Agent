@@ -31,6 +31,7 @@ async def test_runtime_builds_healthy_dry_run_application() -> None:
         request_timeout_seconds=5,
         site_manifest_path=None,
         browser_artifact_directory=None,
+        visual_baseline_directory=None,
     )
     app = build_app(settings)
 
@@ -61,6 +62,7 @@ async def test_runtime_registers_manual_check_when_manifest_is_configured(
         request_timeout_seconds=5,
         site_manifest_path=manifest_path,
         browser_artifact_directory=tmp_path / "artifacts",
+        visual_baseline_directory=tmp_path / "baselines",
     )
 
     app = build_app(settings)

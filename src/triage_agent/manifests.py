@@ -98,6 +98,7 @@ class ViewportManifest(StrictManifestModel):
     width: StrictInt = Field(ge=1, le=7680)
     height: StrictInt = Field(ge=1, le=7680)
     device_scale_factor: StrictFloat = Field(ge=0.25, le=4.0)
+    visual_threshold_percentage: StrictFloat | None = Field(default=None, ge=0.0, le=100.0)
 
 
 FillValue = Annotated[str, StringConstraints(strict=True, max_length=500)]

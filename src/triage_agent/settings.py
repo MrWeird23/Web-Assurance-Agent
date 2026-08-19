@@ -13,6 +13,7 @@ class Settings:
     request_timeout_seconds: float
     site_manifest_path: Path | None = None
     browser_artifact_directory: Path | None = None
+    visual_baseline_directory: Path | None = None
     manual_check_concurrency: int = 1
 
     @classmethod
@@ -42,6 +43,7 @@ class Settings:
         discord_url = values.get("TRIAGE_DISCORD_WEBHOOK_URL", "").strip() or None
         manifest_path = values.get("TRIAGE_SITE_MANIFEST_PATH", "").strip()
         artifact_directory = values.get("TRIAGE_BROWSER_ARTIFACT_DIRECTORY", "").strip()
+        baseline_directory = values.get("TRIAGE_VISUAL_BASELINE_DIRECTORY", "").strip()
         return cls(
             webhook_token=token,
             allowed_hosts=hosts,
@@ -51,5 +53,6 @@ class Settings:
             request_timeout_seconds=timeout,
             site_manifest_path=Path(manifest_path) if manifest_path else None,
             browser_artifact_directory=Path(artifact_directory) if artifact_directory else None,
+            visual_baseline_directory=Path(baseline_directory) if baseline_directory else None,
             manual_check_concurrency=manual_check_concurrency,
         )

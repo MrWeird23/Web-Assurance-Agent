@@ -13,12 +13,19 @@ services:
       TRIAGE_REQUEST_TIMEOUT_SECONDS: "${TRIAGE_REQUEST_TIMEOUT_SECONDS:-15}"
       TRIAGE_SITE_MANIFEST_PATH: "/app/config/sites.yaml"
       TRIAGE_BROWSER_ARTIFACT_DIRECTORY: "/tmp/browser-artifacts"
+      TRIAGE_VISUAL_BASELINE_DIRECTORY: "/var/lib/triage/baselines"
       TRIAGE_MANUAL_CHECK_CONCURRENCY: "${TRIAGE_MANUAL_CHECK_CONCURRENCY:-1}"
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
     volumes:
       - type: bind
         source: ./config/sites.yaml
         target: /app/config/sites.yaml
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./data/baselines
+        target: /var/lib/triage/baselines
         read_only: true
         bind:
           create_host_path: false

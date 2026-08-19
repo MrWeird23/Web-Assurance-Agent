@@ -56,6 +56,14 @@ class ScreenshotArtifact:
 
 
 @dataclass(frozen=True, slots=True)
+class VisualAssuranceResult:
+    status: str
+    exceeds_threshold: bool
+    changed_pixel_percentage: float | None
+    changed_region_count: int
+
+
+@dataclass(frozen=True, slots=True)
 class BrowserEvidence:
     page_id: str
     requested_url: str
@@ -79,6 +87,7 @@ class BrowserEvidence:
     duration_ms: int
     timed_out: bool
     screenshot: ScreenshotArtifact | None
+    visual_assurance: VisualAssuranceResult | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -283,6 +292,30 @@ def _is_valid_evidence(evidence: BrowserEvidence) -> bool:
             and all(character in "0123456789abcdef" for character in screenshot.sha256)
         ):
             return False
+    if evidence.visual_assurance is not None:
+        visual = evidence.visual_assurance
+        if (
+            type(visual) is not VisualAssuranceResult
+            or visual.status not in {"baseline_pending", "matched", "changed", "unavailable"}
+            or type(visual.exceeds_threshold) is not bool
+            or type(visual.changed_region_count) is not int
+            or not 0 <= visual.changed_region_count <= 50
+            or (
+                visual.changed_pixel_percentage is not None
+                and not _is_finite_number(
+                    visual.changed_pixel_percentage,
+                    minimum=0.0,
+                    maximum=100.0,
+                )
+            )
+        ):
+            return False
+        if visual.exceeds_threshold != (visual.status == "changed"):
+            return False
+        if visual.status in {"baseline_pending", "unavailable"} and (
+            visual.changed_pixel_percentage is not None or visual.changed_region_count != 0
+        ):
+            return False
     return True
 
 
@@ -300,6 +333,20 @@ def evaluate_browser_evidence(evidence: BrowserEvidence) -> BrowserEvaluation:
         )
 
     failures: list[BrowserFinding] = []
+    if evidence.visual_assurance is not None and evidence.visual_assurance.status == "changed":
+        failures.append(
+            BrowserFinding(
+                code="visual_regression",
+                message="The screenshot exceeded the approved visual threshold.",
+            )
+        )
+    if evidence.visual_assurance is not None and evidence.visual_assurance.status == "unavailable":
+        failures.append(
+            BrowserFinding(
+                code="visual_evaluation_failed",
+                message="The visual comparison could not be completed.",
+            )
+        )
     if evidence.timed_out:
         failures.append(
             BrowserFinding(
@@ -396,16 +443,26 @@ def evaluate_browser_evidence(evidence: BrowserEvidence) -> BrowserEvaluation:
         for resource in evidence.resource_failures
         if resource.critical
     )
-    information = tuple(
+    information = [
         BrowserFinding(
             code="noncritical_resource_failure",
             message="A non-critical page resource failed to load.",
         )
         for resource in evidence.resource_failures
         if not resource.critical
-    )
+    ]
+    if (
+        evidence.visual_assurance is not None
+        and evidence.visual_assurance.status == "baseline_pending"
+    ):
+        information.append(
+            BrowserFinding(
+                code="baseline_pending",
+                message="No approved visual baseline is available.",
+            )
+        )
     return BrowserEvaluation(
         healthy=not failures,
         failures=tuple(failures),
-        information=information,
+        information=tuple(information),
     )

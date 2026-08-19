@@ -14,6 +14,7 @@ def test_settings_parse_safe_runtime_environment() -> None:
             "TRIAGE_REQUEST_TIMEOUT_SECONDS": "10",
             "TRIAGE_SITE_MANIFEST_PATH": "/run/config/sites.yaml",
             "TRIAGE_BROWSER_ARTIFACT_DIRECTORY": "/tmp/browser-artifacts",
+            "TRIAGE_VISUAL_BASELINE_DIRECTORY": "/var/lib/triage/baselines",
             "TRIAGE_MANUAL_CHECK_CONCURRENCY": "2",
         }
     )
@@ -25,6 +26,7 @@ def test_settings_parse_safe_runtime_environment() -> None:
     assert settings.request_timeout_seconds == 10.0
     assert settings.site_manifest_path == Path("/run/config/sites.yaml")
     assert settings.browser_artifact_directory == Path("/tmp/browser-artifacts")
+    assert settings.visual_baseline_directory == Path("/var/lib/triage/baselines")
     assert settings.manual_check_concurrency == 2
 
 
@@ -38,6 +40,7 @@ def test_settings_leave_browser_checks_disabled_without_manifest_path() -> None:
 
     assert settings.site_manifest_path is None
     assert settings.browser_artifact_directory is None
+    assert settings.visual_baseline_directory is None
     assert settings.manual_check_concurrency == 1
 
 
