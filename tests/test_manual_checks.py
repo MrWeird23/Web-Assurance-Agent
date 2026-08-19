@@ -269,6 +269,30 @@ async def test_manual_check_runs_only_manifest_page_and_returns_concise_evidence
         "failed_plugin_assertions": [],
     }
     assert payload["artifacts"] == ["home/desktop.png", "home/desktop.png"]
+    assert payload["site_id"] == "example"
+    assert payload["kuma_monitor_id"] is None
+    assert payload["confidence"] == "high"
+    assert payload["next_action"] == "No action required."
+    assert payload["viewports"] == [
+        {
+            "device_profile": "desktop",
+            "classification": "healthy",
+            "failure_codes": [],
+            "console_error_count": 0,
+            "resource_failure_count": 0,
+            "screenshot": "home/desktop.png",
+            "visual_status": None,
+        },
+        {
+            "device_profile": "mobile",
+            "classification": "healthy",
+            "failure_codes": [],
+            "console_error_count": 0,
+            "resource_failure_count": 0,
+            "screenshot": "home/desktop.png",
+            "visual_status": None,
+        },
+    ]
     assert checker.calls == [
         ("home", "desktop", frozenset({"example.com"})),
         ("home", "mobile", frozenset({"example.com"})),

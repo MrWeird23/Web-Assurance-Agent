@@ -14,6 +14,8 @@ from triage_agent.browser_checks import (
     TextResult,
     Viewport,
     VisualAssuranceResult,
+    classification_confidence,
+    classification_next_action,
     classify_check,
     evaluate_browser_evidence,
 )
@@ -528,3 +530,21 @@ def test_classify_check_prioritizes_render_failure_over_everything_else() -> Non
 
 def test_classify_check_ignores_baseline_pending_when_a_real_failure_exists() -> None:
     assert classify_check(["console_error"], baseline_pending=True) == "javascript_failure"
+
+
+@pytest.mark.parametrize(
+    "classification",
+    [
+        "render_failure",
+        "wordpress_error_page",
+        "critical_resource_failure",
+        "javascript_failure",
+        "functional_regression",
+        "visual_regression",
+        "baseline_pending",
+        "healthy",
+    ],
+)
+def test_every_classification_has_a_confidence_and_next_action(classification: str) -> None:
+    assert classification_confidence(classification) in {"high", "medium", "low"}
+    assert classification_next_action(classification)

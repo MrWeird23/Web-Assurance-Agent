@@ -301,6 +301,29 @@ When several failure kinds occur in the same check, the table order above is the
 render failure is reported over a simultaneous JavaScript error. `baseline_pending` never overrides
 an actual failure and never triggers a scheduled deep-check Discord alert.
 
+Each classification also carries a static `confidence` (`high`/`medium`/`low`) and `next_action`
+(the cheapest next diagnostic step), returned alongside `classification` in the check response.
+
+### Extended check reports
+
+`/checks/pages/{page_id}` and scheduled deep checks also return:
+
+- `site_id` and `kuma_monitor_id` — so a report can be correlated back to the Kuma monitor that
+  triggered it;
+- `viewports` — one entry per checked viewport with its own `device_profile`, `classification`,
+  `failure_codes`, `console_error_count`, `resource_failure_count`, `screenshot` artifact path, and
+  `visual_status`. Raw console text, resource URLs, and selector strings are never included — only
+  stable codes and counts, consistent with the existing redaction policy;
+- `wordpress_health` already reports approved core/plugin/site-health evidence per check.
+
+No diff-image artifact is written to disk today, so no diff path is reported; the current
+screenshot path plus `visual_status` (`matched`/`changed`/`unavailable`/`baseline_pending`) is the
+available visual evidence.
+
+Kuma incident reports (`render_discord_payload`) include a `Recovery duration` field whenever a
+`RECOVERED` event follows a tracked outage; the duration is computed by
+`DurableIncidentRegistry.reserve()` from the recorded outage start.
+
 Real `.env` files, pilot configuration, webhook tokens, credentials, and tunnel details must never be committed. The repository includes only `.env.example` placeholders.
 
 ## Additive Uptime Kuma integration

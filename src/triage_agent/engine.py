@@ -69,8 +69,13 @@ class TriageEngine:
                     await self._sleeper(self._confirmation_delay_seconds)
                 probes.append(await self._probe(event.url))
         incident = classify_incident(event, probes)
-        discord_payload = render_discord_payload(event, incident, probes)
         reservation = self._registry.reserve(event, incident)
+        discord_payload = render_discord_payload(
+            event,
+            incident,
+            probes,
+            recovery_duration_seconds=reservation.recovery_duration_seconds,
+        )
         if reservation.decision is PublicationDecision.PUBLISH:
             try:
                 await self._publish(discord_payload)

@@ -9,7 +9,13 @@ from typing import Any, Protocol
 from fastapi import FastAPI, HTTPException, Request
 
 from triage_agent import __version__
-from triage_agent.browser_checks import BrowserEvidence, classify_check, evaluate_browser_evidence
+from triage_agent.browser_checks import (
+    BrowserEvidence,
+    classification_confidence,
+    classification_next_action,
+    classify_check,
+    evaluate_browser_evidence,
+)
 from triage_agent.discord import DiscordPublishError
 from triage_agent.manifests import ManifestRegistry, PageManifest, ViewportManifest
 from triage_agent.wordpress_health import WordPressHealthResult
@@ -199,16 +205,39 @@ async def run_page_check(
         for evaluation in evaluations
         for finding in evaluation.information
     )
+    classification = classify_check(failure_codes, baseline_pending=baseline_pending)
+    viewports = [
+        {
+            "device_profile": item.device_profile,
+            "classification": classify_check(
+                [finding.code for finding in evaluation.failures],
+                baseline_pending=any(
+                    finding.code == "baseline_pending" for finding in evaluation.information
+                ),
+            ),
+            "failure_codes": sorted(finding.code for finding in evaluation.failures),
+            "console_error_count": len(item.console_errors) + len(item.page_exceptions),
+            "resource_failure_count": len(item.resource_failures),
+            "screenshot": item.screenshot.path if item.screenshot is not None else None,
+            "visual_status": item.visual_assurance.status if item.visual_assurance else None,
+        }
+        for item, evaluation in zip(evidence, evaluations, strict=True)
+    ]
     return {
         "check_id": secrets.token_hex(16),
         "page_id": page.id,
-        "classification": classify_check(failure_codes, baseline_pending=baseline_pending),
+        "site_id": site_id,
+        "kuma_monitor_id": page.kuma_monitor_id,
+        "classification": classification,
+        "confidence": classification_confidence(classification),
+        "next_action": classification_next_action(classification),
         "evidence": {
             "viewports_checked": len(evidence),
             "failed_viewports": failed_viewports,
             "failure_codes": failure_codes,
             "failed_plugin_assertions": failed_plugin_assertions,
         },
+        "viewports": viewports,
         "artifacts": [item.screenshot.path for item in evidence if item.screenshot is not None],
         "wordpress_health": wordpress_health,
     }

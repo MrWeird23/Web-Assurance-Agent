@@ -223,6 +223,38 @@ async def test_engine_swallows_on_publish_hook_errors() -> None:
     assert outcome.incident.kind is IncidentKind.CONFIRMED_OUTAGE
 
 
+async def test_engine_reports_recovery_duration_from_outage_start_to_recovery(
+    tmp_path: Path,
+) -> None:
+    published: list[dict[str, Any]] = []
+
+    async def probe(url: str) -> ProbeResult:
+        return ProbeResult(False, 503, 100, url, "HTTP 503", "cloudflare")
+
+    async def publish(payload: dict[str, Any]) -> None:
+        published.append(payload)
+
+    registry = DurableIncidentRegistry(tmp_path / "state.sqlite3")
+    engine = TriageEngine(
+        probe=probe, publish=publish, confirmation_attempts=1, registry=registry
+    )
+    outage = {
+        "heartbeat": {"status": 0, "time": "2026-08-04 13:20:00", "msg": "HTTP 503"},
+        "monitor": {"id": 12, "name": "Example", "url": "https://example.com/"},
+    }
+    recovery = {
+        "heartbeat": {"status": 1, "time": "2026-08-04 13:25:30", "msg": "200 OK"},
+        "monitor": {"id": 12, "name": "Example", "url": "https://example.com/"},
+    }
+
+    await engine.handle(outage)
+    await engine.handle(recovery)
+    registry.close()
+
+    fields = {field["name"]: field["value"] for field in published[1]["embeds"][0]["fields"]}
+    assert fields["Recovery duration"] == "5m 30s"
+
+
 async def test_engine_serializes_concurrent_events_for_same_monitor() -> None:
     published: list[dict[str, Any]] = []
 
