@@ -19,6 +19,7 @@ WordPressHealthErrorCode = Literal[
     "unexpected_status",
     "response_too_large",
     "invalid_health_payload",
+    "missing_secret",
 ]
 
 

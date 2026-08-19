@@ -13,6 +13,7 @@ from triage_agent.browser_checks import (
     Viewport,
 )
 from triage_agent.manifests import PageManifest, ViewportManifest, parse_site_manifest
+from triage_agent.wordpress_health import WordPressHealthResult
 
 
 class StubEngine:
@@ -34,6 +35,50 @@ sites:
         required_text: [Welcome]
         required_selectors: [main]
 """
+
+WORDPRESS_MANIFEST = """
+version: 1
+sites:
+  - id: example
+    allowed_hosts: [example.com]
+    pages:
+      - id: home
+        url: https://example.com/
+        viewports:
+          - {id: desktop, width: 1440, height: 900, device_scale_factor: 1.0}
+        wordpress_health:
+          - id: site-health
+            endpoint: https://example.com/wp-json/techx-monitor/v1/health
+            token_secret_ref: site-token
+"""
+
+
+class StubWordPressHealthChecker:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, frozenset[str]]] = []
+
+    async def run(
+        self,
+        *,
+        endpoint: str,
+        site_id: str,
+        token_secret_ref: str,
+        allowed_hosts: set[str],
+    ) -> WordPressHealthResult:
+        self.calls.append((endpoint, f"{site_id}:{token_secret_ref}", frozenset(allowed_hosts)))
+        return WordPressHealthResult(
+            ok=True,
+            error_code=None,
+            core_version="6.8.1",
+            core_update_available=True,
+            plugin_updates=("contact-form-7",),
+            site_health_status="critical",
+            critical_test_count=1,
+            overdue_cron_count=2,
+            failing_cron_count=0,
+            rest_api_ok=True,
+            fatal_error_codes=("plugin_fatal",),
+        )
 
 
 class StubPageChecker:
@@ -264,3 +309,60 @@ async def test_manual_check_rejects_concurrent_request_when_capacity_is_exhauste
     assert second.status_code == 429
     assert second.headers["Retry-After"] == "1"
     assert first_response.status_code == 200
+
+
+async def test_manual_check_returns_concise_wordpress_health_evidence() -> None:
+    wordpress_checker = StubWordPressHealthChecker()
+    app = create_app(
+        engine=StubEngine(),
+        webhook_token="expected-secret",
+        manifest_registry=parse_site_manifest(WORDPRESS_MANIFEST),
+        page_checker=StubPageChecker(),
+        wordpress_health_checker=wordpress_checker,
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.post(
+            "/checks/pages/home",
+            headers={"X-Triage-Token": "expected-secret"},
+        )
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert payload["classification"] == "failed"
+    assert payload["evidence"]["failure_codes"] == [
+        "wordpress_core_update_available",
+        "wordpress_cron_overdue",
+        "wordpress_fatal_error",
+        "wordpress_site_health_critical",
+    ]
+    assert payload["wordpress_health"] == [
+        {
+            "id": "site-health",
+            "ok": True,
+            "core_version": "6.8.1",
+            "core_update_available": True,
+            "plugin_updates": ["contact-form-7"],
+            "site_health_status": "critical",
+            "critical_test_count": 1,
+            "overdue_cron_count": 2,
+            "failing_cron_count": 0,
+            "rest_api_ok": True,
+            "fatal_error_codes": ["plugin_fatal"],
+            "error_code": None,
+            "failure_codes": [
+                "wordpress_core_update_available",
+                "wordpress_cron_overdue",
+                "wordpress_fatal_error",
+                "wordpress_site_health_critical",
+            ],
+        }
+    ]
+    assert wordpress_checker.calls == [
+        (
+            "https://example.com/wp-json/techx-monitor/v1/health",
+            "example:site-token",
+            frozenset({"example.com"}),
+        )
+    ]

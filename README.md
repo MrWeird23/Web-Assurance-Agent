@@ -38,6 +38,8 @@ Authorized WordPress sites may declare a purpose-built read-only health endpoint
 `wordpress_health`. The manifest stores only a `token_secret_ref`, never the credential itself.
 Health responses are limited to 64 KiB, validated against a closed typed schema, and reduced to
 non-sensitive evidence rather than retained as raw response text.
+Secrets are site-scoped: manifest site `example` with reference `site-token` resolves only from
+`TRIAGE_SECRET_EXAMPLE_SITE_TOKEN`. Missing or short secrets fail closed before network access.
 
 ## Current capabilities
 

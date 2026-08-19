@@ -369,10 +369,21 @@ Current implementation (4.1):
   site health status, overdue/failing cron, REST API state, and a small tuple of fatal-error
   codes. No raw response body is retained.
 
+Current implementation (4.2):
+
+- environment secrets are scoped by manifest site and reference as
+  `TRIAGE_SECRET_<SITE_ID>_<REFERENCE>`; missing or short values fail closed before network access;
+- the authenticated manual page check runs WordPress health collection under the same bounded
+  concurrency permit as browser collection;
+- WordPress health failures contribute to the top-level `failed` classification and stable failure
+  codes, including typed collection errors, core/theme updates, critical Site Health, cron failures,
+  REST API failure, and fatal-error evidence;
+- API output excludes endpoint URLs, secret references, credentials, and raw response bodies.
+
 Deferred for later sub-milestones:
 
-- secret loading strategy and rotation;
-- integration with the manual check endpoint and report formatter;
+- external secret-manager adapters and rotation;
+- report formatter and alert routing integration;
 - host-side WP-CLI collector and Application Password strategy;
 - alert routing for `critical` Site Health status or fatal-error codes.
 
