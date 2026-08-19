@@ -45,4 +45,7 @@ sites:
         #       - form.wpcf7-form
         #       - input[name="your-email"]
         #       - input[type="submit"]
+        # Requires explicit site authorization. The secret reference is resolved outside
+        # this manifest; never place the credential itself here.
+        wordpress_health: []
         interactions: []

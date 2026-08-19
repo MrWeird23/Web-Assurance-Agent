@@ -346,6 +346,8 @@ bounded changed-region count — no baseline bytes or raw image content.
 
 ## Milestone 4 — Read-only WordPress administrative health
 
+**Status:** in progress in `0.4.0`
+
 **Prerequisite:** explicit authorization for each site and access method.
 
 Preferred access order:
@@ -354,15 +356,25 @@ Preferred access order:
 2. least-privilege WordPress Application Password;
 3. host-side WP-CLI collector where authorized.
 
-Potential evidence:
+Current implementation (4.1):
 
-- core version and update state;
-- active plugin/theme inventory and versions;
-- required plugin state;
-- approved Site Health results;
-- overdue or failing WP-Cron events;
-- REST API health;
-- narrowly scoped fatal/plugin error evidence.
+- `WordPressHealthManifest` declares an endpoint and a `token_secret_ref` per site;
+- the caller must provide the actual token through the runtime's secret loader
+  (`WordPressHealthManifest` itself stores no secret);
+- `fetch_wordpress_health` uses the existing `validate_probe_url`/`validate_resolved_addresses`
+  boundaries, connects to a resolved IP while preserving Host and TLS SNI, rejects redirects,
+  and bounds response size to 64 KiB;
+- response is parsed into a strict pydantic model with `extra="forbid"` and typed fields;
+- the result exposes only typed evidence: core/theme version, pending plugin updates,
+  site health status, overdue/failing cron, REST API state, and a small tuple of fatal-error
+  codes. No raw response body is retained.
+
+Deferred for later sub-milestones:
+
+- secret loading strategy and rotation;
+- integration with the manual check endpoint and report formatter;
+- host-side WP-CLI collector and Application Password strategy;
+- alert routing for `critical` Site Health status or fatal-error codes.
 
 Credentials remain site-specific. Compromise of one monitoring identity must not expose the fleet.
 

@@ -127,6 +127,12 @@ class PluginAssertionManifest(StrictManifestModel):
     required_selectors: tuple[NonEmptyText, ...] = Field(min_length=1, max_length=20)
 
 
+class WordPressHealthManifest(StrictManifestModel):
+    id: Identifier
+    endpoint: NonEmptyText
+    token_secret_ref: NonEmptyText
+
+
 class PageManifest(StrictManifestModel):
     id: Identifier
     url: NonEmptyText
@@ -141,6 +147,7 @@ class PageManifest(StrictManifestModel):
     application_shortcodes: tuple[ShortcodeName, ...] = Field(default=(), max_length=20)
     plugin_assertions: tuple[PluginAssertionManifest, ...] = Field(default=(), max_length=20)
     interactions: tuple[InteractionManifest, ...] = Field(default=(), max_length=20)
+    wordpress_health: tuple[WordPressHealthManifest, ...] = Field(default=(), max_length=5)
 
 
 class SiteManifest(StrictManifestModel):

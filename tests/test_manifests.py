@@ -45,6 +45,10 @@ sites:
               - form.wpcf7-form
               - input[name="your-email"]
               - input[type="submit"]
+        wordpress_health:
+          - id: site-health
+            endpoint: https://example.com/wp-json/techx-monitor/v1/health
+            token_secret_ref: techx-monitor-token
         interactions:
           - action: click
             selector: button[aria-expanded="false"]
@@ -66,6 +70,9 @@ def test_parses_valid_declarative_site_manifest() -> None:
         'input[name="your-email"]',
         'input[type="submit"]',
     )
+    assert page.wordpress_health[0].id == "site-health"
+    assert page.wordpress_health[0].endpoint == "https://example.com/wp-json/techx-monitor/v1/health"
+    assert page.wordpress_health[0].token_secret_ref == "techx-monitor-token"
     assert page.interactions[0].enabled is False
     assert registry.allowed_hosts("home") == frozenset({"example.com"})
 

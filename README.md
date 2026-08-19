@@ -5,13 +5,13 @@ Web Assurance Agent is a read-only service that turns Uptime Kuma website events
 Uptime Kuma remains the fast deterministic outage detector. This service receives an authenticated event, confirms failures through tightly controlled HTTPS probes, classifies the result, suppresses duplicate reports, and either publishes a structured Discord embed or logs it in dry-run mode.
 
 > [!IMPORTANT]
-> The `0.3.0` development branch provides HTTP incident confirmation and reporting,
+> The `0.4.0` development branch provides HTTP incident confirmation and reporting,
 > strict declarative page manifests, and an isolated Playwright/Chromium runner with
 > deterministic browser evidence. An authenticated manual endpoint can invoke checks for
 > manifest-defined pages, including narrow detection of visible WordPress and PHP failure
 > signatures, opt-in plugin-specific rendered-state assertions, safe interactions, and
-> human-approved visual regression. Scheduling and administrative WordPress health remain planned
-> in [ROADMAP.md](ROADMAP.md).
+> human-approved visual regression. Authorized, site-specific read-only WordPress administrative
+> health collection is now being added; scheduling remains planned in [ROADMAP.md](ROADMAP.md).
 
 ## Why this exists
 
@@ -33,6 +33,11 @@ file/line evidence; and a narrow allowlist of visibly unrendered plugin shortcod
 the word `error` by itself, and reports stable codes rather than copying raw page text into results.
 Shortcode detection is opt-in per page through `application_shortcodes` in the site manifest; list
 only shortcode names that are expected to render on that specific page.
+
+Authorized WordPress sites may declare a purpose-built read-only health endpoint through
+`wordpress_health`. The manifest stores only a `token_secret_ref`, never the credential itself.
+Health responses are limited to 64 KiB, validated against a closed typed schema, and reduced to
+non-sensitive evidence rather than retained as raw response text.
 
 ## Current capabilities
 
