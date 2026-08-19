@@ -85,5 +85,6 @@ def build_app(settings: Settings) -> FastAPI:
         manifest_registry=manifest_registry,
         page_checker=page_checker,
         wordpress_health_checker=wordpress_health_checker,
+        wordpress_alert_publisher=publisher,
         manual_check_concurrency=settings.manual_check_concurrency,
     )

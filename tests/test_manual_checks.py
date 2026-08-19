@@ -21,6 +21,14 @@ class StubEngine:
         del payload
 
 
+class StubPublisher:
+    def __init__(self) -> None:
+        self.payloads: list[dict[str, object]] = []
+
+    async def __call__(self, payload: dict[str, object]) -> None:
+        self.payloads.append(payload)
+
+
 MANIFEST = """
 version: 1
 sites:
@@ -366,3 +374,53 @@ async def test_manual_check_returns_concise_wordpress_health_evidence() -> None:
             frozenset({"example.com"}),
         )
     ]
+
+
+async def test_manual_check_routes_critical_wordpress_health_alert() -> None:
+    publisher = StubPublisher()
+    app = create_app(
+        engine=StubEngine(),
+        webhook_token="expected-secret",
+        manifest_registry=parse_site_manifest(WORDPRESS_MANIFEST),
+        page_checker=StubPageChecker(),
+        wordpress_health_checker=StubWordPressHealthChecker(),
+        wordpress_alert_publisher=publisher,
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.post(
+            "/checks/pages/home",
+            headers={"X-Triage-Token": "expected-secret"},
+        )
+
+    assert response.status_code == 200
+    assert len(publisher.payloads) == 1
+    embeds = publisher.payloads[0]["embeds"]
+    assert isinstance(embeds, list)
+    assert embeds[0]["title"] == "WordPress administrative health alert"
+
+
+async def test_wordpress_alert_delivery_failure_does_not_fail_manual_check() -> None:
+    async def failing_publisher(payload: dict[str, object]) -> None:
+        del payload
+        raise RuntimeError("delivery unavailable")
+
+    app = create_app(
+        engine=StubEngine(),
+        webhook_token="expected-secret",
+        manifest_registry=parse_site_manifest(WORDPRESS_MANIFEST),
+        page_checker=StubPageChecker(),
+        wordpress_health_checker=StubWordPressHealthChecker(),
+        wordpress_alert_publisher=failing_publisher,
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.post(
+            "/checks/pages/home",
+            headers={"X-Triage-Token": "expected-secret"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["classification"] == "failed"

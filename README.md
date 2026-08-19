@@ -34,6 +34,10 @@ the word `error` by itself, and reports stable codes rather than copying raw pag
 Shortcode detection is opt-in per page through `application_shortcodes` in the site manifest; list
 only shortcode names that are expected to render on that specific page.
 
+Authorized WordPress administrative health checks may also publish a credential-safe Discord alert
+through the existing publisher. Alerts contain stable failure codes and aggregate health evidence;
+they never include endpoint URLs, secret references, credentials, raw responses, or raw fatal codes.
+
 Authorized WordPress sites may declare a purpose-built read-only health endpoint through
 `wordpress_health`. The manifest stores only a `token_secret_ref`, never the credential itself.
 Health responses are limited to 64 KiB, validated against a closed typed schema, and reduced to

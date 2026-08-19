@@ -380,12 +380,22 @@ Current implementation (4.2):
   REST API failure, and fatal-error evidence;
 - API output excludes endpoint URLs, secret references, credentials, and raw response bodies.
 
+Current implementation (4.3):
+
+- typed WordPress health results are normalized through one stable failure-code policy shared by
+  the manual API response and alert formatter;
+- any failed administrative collection or detected health condition is routed through the existing
+  Discord/dry-run publisher without introducing a second webhook credential;
+- critical Site Health or fatal-error evidence receives critical alert severity; update, cron,
+  REST API, and collection conditions use warning severity;
+- alert payloads contain only page/check IDs, bounded aggregate counts, versions, health state, and
+  stable failure codes. Endpoint URLs, secret references, credentials, raw bodies, raw fatal codes,
+  and plugin inventories are excluded.
+
 Deferred for later sub-milestones:
 
 - external secret-manager adapters and rotation;
-- report formatter and alert routing integration;
 - host-side WP-CLI collector and Application Password strategy;
-- alert routing for `critical` Site Health status or fatal-error codes.
 
 Credentials remain site-specific. Compromise of one monitoring identity must not expose the fleet.
 

@@ -1,7 +1,8 @@
 import asyncio
 import json
+import logging
 import secrets
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from typing import Any, Protocol
 
@@ -12,8 +13,14 @@ from triage_agent.browser_checks import BrowserEvidence, evaluate_browser_eviden
 from triage_agent.discord import DiscordPublishError
 from triage_agent.manifests import ManifestRegistry, PageManifest, ViewportManifest
 from triage_agent.wordpress_health import WordPressHealthResult
+from triage_agent.wordpress_reporting import (
+    render_wordpress_health_discord_payload,
+    wordpress_health_failure_codes,
+)
 
 MAX_WEBHOOK_BODY_BYTES = 65_536
+AlertPublisher = Callable[[dict[str, Any]], Awaitable[None]]
+logger = logging.getLogger(__name__)
 
 
 class Engine(Protocol):
@@ -49,6 +56,7 @@ def create_app(
     manifest_registry: ManifestRegistry | None = None,
     page_checker: PageChecker | None = None,
     wordpress_health_checker: WordPressHealthChecker | None = None,
+    wordpress_alert_publisher: AlertPublisher | None = None,
     manual_check_concurrency: int = 1,
 ) -> FastAPI:
     app = FastAPI(
@@ -132,6 +140,24 @@ def create_app(
                         wordpress_health.append(
                             _wordpress_health_summary(health_check.id, health)
                         )
+                        if (
+                            wordpress_alert_publisher is not None
+                            and wordpress_health_failure_codes(health)
+                        ):
+                            try:
+                                await wordpress_alert_publisher(
+                                    render_wordpress_health_discord_payload(
+                                        page_id=page.id,
+                                        check_id=health_check.id,
+                                        result=health,
+                                    )
+                                )
+                            except Exception:
+                                logger.exception(
+                                    "wordpress_health_alert_delivery_failed page_id=%s check_id=%s",
+                                    page.id,
+                                    health_check.id,
+                                )
             finally:
                 manual_check_slots.put_nowait(None)
             evaluations = [evaluate_browser_evidence(item) for item in evidence]
@@ -184,23 +210,7 @@ def _wordpress_health_summary(
     check_id: str,
     health: WordPressHealthResult,
 ) -> dict[str, Any]:
-    failure_codes: list[str] = []
-    if not health.ok:
-        failure_codes.append(f"wordpress_health_{health.error_code or 'unavailable'}")
-    if health.core_update_available:
-        failure_codes.append("wordpress_core_update_available")
-    if health.site_health_status == "critical":
-        failure_codes.append("wordpress_site_health_critical")
-    if health.fatal_error_codes:
-        failure_codes.append("wordpress_fatal_error")
-    if health.rest_api_ok is False:
-        failure_codes.append("wordpress_rest_api_failure")
-    if health.theme_update_available:
-        failure_codes.append("wordpress_theme_update_available")
-    if health.overdue_cron_count:
-        failure_codes.append("wordpress_cron_overdue")
-    if health.failing_cron_count:
-        failure_codes.append("wordpress_cron_failing")
+    failure_codes = wordpress_health_failure_codes(health)
     return {
         "id": check_id,
         "ok": health.ok,
@@ -214,7 +224,7 @@ def _wordpress_health_summary(
         "rest_api_ok": health.rest_api_ok,
         "fatal_error_codes": list(health.fatal_error_codes),
         "error_code": health.error_code,
-        "failure_codes": sorted(failure_codes),
+        "failure_codes": list(failure_codes),
     }
 
 
