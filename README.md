@@ -343,6 +343,15 @@ The service is intended to be added alongside existing notification providers:
 
 The repository contains no automation that changes Kuma configuration.
 
+## Pilot rollout
+
+`docs/pilot-rollout.md` turns the steps above (plus dry-run review and
+manual baseline approval) into a concrete, repeatable runbook against this
+repository's actual settings and `scripts/approve_baseline.py`.
+`docs/pilot-inventory.md` is the per-site inventory template (critical
+pages, plugins, workflows, owner, severity, maintenance window) the runbook
+expects to exist before a page goes on a check schedule.
+
 ## Verification gates
 
 Before publishing a change:
