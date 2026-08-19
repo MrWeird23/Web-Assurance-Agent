@@ -174,6 +174,55 @@ async def test_engine_does_not_publish_stale_transition_after_newer_recovery() -
     assert published_titles == ["Recovered"]
 
 
+async def test_engine_calls_on_publish_hook_only_when_incident_is_published() -> None:
+    hook_calls: list[IncidentKind] = []
+
+    async def probe(url: str) -> ProbeResult:
+        return ProbeResult(False, 503, 100, url, "HTTP 503", "cloudflare")
+
+    async def publish(_payload: dict[str, Any]) -> None:
+        return None
+
+    async def on_publish(event: Any, incident: Any) -> None:
+        hook_calls.append(incident.kind)
+
+    engine = TriageEngine(
+        probe=probe, publish=publish, confirmation_attempts=1, on_publish=on_publish
+    )
+    payload = {
+        "heartbeat": {"status": 0, "time": "2026-08-04 13:20:00", "msg": "HTTP 503"},
+        "monitor": {"id": 12, "name": "Example", "url": "https://example.com/"},
+    }
+
+    await engine.handle(payload)
+    await engine.handle(payload)  # duplicate: must not fire the hook again
+
+    assert hook_calls == [IncidentKind.CONFIRMED_OUTAGE]
+
+
+async def test_engine_swallows_on_publish_hook_errors() -> None:
+    async def probe(url: str) -> ProbeResult:
+        return ProbeResult(False, 503, 100, url, "HTTP 503", "cloudflare")
+
+    async def publish(_payload: dict[str, Any]) -> None:
+        return None
+
+    async def failing_hook(event: Any, incident: Any) -> None:
+        raise RuntimeError("hook exploded")
+
+    engine = TriageEngine(
+        probe=probe, publish=publish, confirmation_attempts=1, on_publish=failing_hook
+    )
+    payload = {
+        "heartbeat": {"status": 0, "time": "2026-08-04 13:20:00", "msg": "HTTP 503"},
+        "monitor": {"id": 12, "name": "Example", "url": "https://example.com/"},
+    }
+
+    outcome = await engine.handle(payload)  # must not raise despite hook failure
+
+    assert outcome.incident.kind is IncidentKind.CONFIRMED_OUTAGE
+
+
 async def test_engine_serializes_concurrent_events_for_same_monitor() -> None:
     published: list[dict[str, Any]] = []
 

@@ -95,3 +95,34 @@ def render_discord_payload(
             }
         ],
     }
+
+
+def render_browser_check_discord_payload(
+    *,
+    page_id: str,
+    failed_viewports: list[str],
+    failure_codes: list[str],
+    failed_plugin_assertions: list[str],
+) -> dict[str, Any]:
+    fields = [
+        {"name": "Failed viewports", "value": ", ".join(failed_viewports) or "None"},
+        {"name": "Failure codes", "value": ", ".join(failure_codes) or "None"},
+    ]
+    if failed_plugin_assertions:
+        fields.append(
+            {
+                "name": "Failed plugin assertions",
+                "value": ", ".join(failed_plugin_assertions),
+            }
+        )
+    return {
+        "username": "Web Assurance Agent",
+        "embeds": [
+            {
+                "title": "Deep check failed",
+                "description": f"Page `{page_id}` failed automated verification.",
+                "color": 0xD83C3E,
+                "fields": fields,
+            }
+        ],
+    }

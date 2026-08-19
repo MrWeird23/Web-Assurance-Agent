@@ -253,12 +253,33 @@ A production deployment should place the service behind an approved TLS reverse 
 | `TRIAGE_VISUAL_BASELINE_DIRECTORY` | No | empty | Directory containing separately stored human-approved visual baselines |
 | `TRIAGE_MANUAL_CHECK_CONCURRENCY` | No | `1` | Maximum simultaneous manual browser checks per service process, from 1 to 4; excess requests receive HTTP 429 |
 | `TRIAGE_STATE_DATABASE_PATH` | No | empty | SQLite file for durable incident/publication state; unset keeps state in memory only (lost on restart, unsafe for multiple workers) |
+| `TRIAGE_SCHEDULER_GLOBAL_CONCURRENCY` | No | `2` | Maximum simultaneous scheduled (fast/deep) checks across all sites, from 1 to 8 |
+| `TRIAGE_SCHEDULER_SITE_CONCURRENCY` | No | `1` | Maximum simultaneous scheduled checks per site, from 1 to 4 |
 | `LOG_LEVEL` | No | `INFO` | Runtime log level |
 
 For Compose deployments, copy `config/sites.example.yaml` to `config/sites.yaml` and replace the
 example host, page IDs, assertions, and viewports before starting the service. Compose mounts that
 file read-only and stores transient screenshot artifacts under the container's bounded `/tmp`
 filesystem.
+
+### Check scheduling
+
+Set `fast_check_interval_seconds` (60–300) and/or `deep_check_interval_seconds` (900–3600) on a
+page in the site manifest to put it on a background schedule, in addition to the on-demand
+`/checks/pages/{page_id}` endpoint:
+
+- **Fast checks** re-probe the page's origin on the given interval and feed the result through the
+  same triage/dedup/Discord pipeline as a real Uptime Kuma webhook. This requires `kuma_monitor_id`
+  (the Kuma monitor ID for this page) so the resulting incident dedupes correctly against Kuma's own
+  webhook traffic for the same monitor.
+- **Deep checks** re-run the full Playwright + WordPress health check on the given interval and
+  publish a Discord alert if it fails; they do not require `kuma_monitor_id`.
+- Whenever a fast check (or a real Kuma webhook) confirms an outage for a page that also has
+  `kuma_monitor_id` set, a deep check for that page runs immediately, outside its normal interval.
+
+Scheduled checks share the same global/per-site concurrency budgets as manual checks
+(`TRIAGE_SCHEDULER_GLOBAL_CONCURRENCY` / `TRIAGE_SCHEDULER_SITE_CONCURRENCY`), and each run is
+jittered to avoid every page waking up in lockstep.
 
 Real `.env` files, pilot configuration, webhook tokens, credentials, and tunnel details must never be committed. The repository includes only `.env.example` placeholders.
 

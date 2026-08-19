@@ -16,6 +16,8 @@ class Settings:
     visual_baseline_directory: Path | None = None
     manual_check_concurrency: int = 1
     state_database_path: Path | None = None
+    scheduler_global_concurrency: int = 2
+    scheduler_site_concurrency: int = 1
 
     @classmethod
     def from_mapping(cls, values: Mapping[str, str]) -> "Settings":
@@ -46,6 +48,14 @@ class Settings:
         artifact_directory = values.get("TRIAGE_BROWSER_ARTIFACT_DIRECTORY", "").strip()
         baseline_directory = values.get("TRIAGE_VISUAL_BASELINE_DIRECTORY", "").strip()
         state_database_path = values.get("TRIAGE_STATE_DATABASE_PATH", "").strip()
+        scheduler_global_concurrency = int(
+            values.get("TRIAGE_SCHEDULER_GLOBAL_CONCURRENCY", "2")
+        )
+        if not 1 <= scheduler_global_concurrency <= 8:
+            raise ValueError("TRIAGE_SCHEDULER_GLOBAL_CONCURRENCY must be between 1 and 8")
+        scheduler_site_concurrency = int(values.get("TRIAGE_SCHEDULER_SITE_CONCURRENCY", "1"))
+        if not 1 <= scheduler_site_concurrency <= 4:
+            raise ValueError("TRIAGE_SCHEDULER_SITE_CONCURRENCY must be between 1 and 4")
         return cls(
             webhook_token=token,
             allowed_hosts=hosts,
@@ -58,4 +68,6 @@ class Settings:
             visual_baseline_directory=Path(baseline_directory) if baseline_directory else None,
             manual_check_concurrency=manual_check_concurrency,
             state_database_path=Path(state_database_path) if state_database_path else None,
+            scheduler_global_concurrency=scheduler_global_concurrency,
+            scheduler_site_concurrency=scheduler_site_concurrency,
         )

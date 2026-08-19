@@ -49,3 +49,8 @@ sites:
         # this manifest; never place the credential itself here.
         wordpress_health: []
         interactions: []
+        # Uncomment to put this page on a background check schedule (see README
+        # "Check scheduling"), in addition to the on-demand /checks/pages endpoint.
+        # fast_check_interval_seconds: 120   # 60-300; re-probes and triages like a Kuma webhook
+        # deep_check_interval_seconds: 1800  # 900-3600; re-runs the full browser/WP health check
+        # kuma_monitor_id: 1                 # required by fast_check_interval_seconds

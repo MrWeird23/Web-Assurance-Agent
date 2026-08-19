@@ -323,3 +323,72 @@ def test_rejects_boolean_manifest_version() -> None:
 
     with pytest.raises(ValueError, match="Invalid site manifest"):
         parse_site_manifest(boolean_version)
+
+
+def test_parses_scheduling_fields_and_resolves_page_by_monitor_id() -> None:
+    scheduled = VALID_MANIFEST.replace(
+        "        url: https://example.com/",
+        "        url: https://example.com/\n"
+        "        fast_check_interval_seconds: 60\n"
+        "        deep_check_interval_seconds: 900\n"
+        "        kuma_monitor_id: 7",
+    )
+
+    registry = parse_site_manifest(scheduled)
+
+    page = registry.page("home")
+    assert page.fast_check_interval_seconds == 60
+    assert page.deep_check_interval_seconds == 900
+    assert page.kuma_monitor_id == 7
+    assert registry.page_by_monitor_id(7) is page
+    assert registry.page_by_monitor_id(999) is None
+
+
+def test_rejects_duplicate_kuma_monitor_id() -> None:
+    duplicate_monitor_id = VALID_MANIFEST.replace(
+        "        url: https://example.com/",
+        "        url: https://example.com/\n        kuma_monitor_id: 7",
+    ).rstrip() + (
+        "\n"
+        "  - id: another-site\n"
+        "    allowed_hosts: [other.example.com]\n"
+        "    pages:\n"
+        "      - id: other-home\n"
+        "        url: https://other.example.com/\n"
+        "        kuma_monitor_id: 7\n"
+        "        viewports:\n"
+        "          - {id: desktop, width: 1440, height: 900, device_scale_factor: 1}\n"
+    )
+
+    with pytest.raises(ValueError, match="duplicate kuma_monitor_id"):
+        parse_site_manifest(duplicate_monitor_id)
+
+
+def test_rejects_fast_check_interval_without_kuma_monitor_id() -> None:
+    missing_monitor_id = VALID_MANIFEST.replace(
+        "        url: https://example.com/",
+        "        url: https://example.com/\n        fast_check_interval_seconds: 60",
+    )
+
+    with pytest.raises(ValueError, match="fast_check_interval_seconds requires kuma_monitor_id"):
+        parse_site_manifest(missing_monitor_id)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("fast_check_interval_seconds", 59),
+        ("fast_check_interval_seconds", 301),
+        ("deep_check_interval_seconds", 899),
+        ("deep_check_interval_seconds", 3601),
+        ("kuma_monitor_id", 0),
+    ],
+)
+def test_rejects_scheduling_fields_outside_allowed_range(field: str, value: int) -> None:
+    out_of_range = VALID_MANIFEST.replace(
+        "        url: https://example.com/",
+        f"        url: https://example.com/\n        {field}: {value}",
+    )
+
+    with pytest.raises(ValueError, match="Invalid site manifest"):
+        parse_site_manifest(out_of_range)
