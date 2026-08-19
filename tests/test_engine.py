@@ -1,12 +1,14 @@
 import asyncio
+from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 from triage_agent.classification import IncidentKind
+from triage_agent.durable_registry import DurableIncidentRegistry
 from triage_agent.engine import TriageEngine
 from triage_agent.probes import ProbeResult
-from triage_agent.registry import IncidentRegistry
 
 
 async def test_engine_confirms_down_event_and_publishes_report() -> None:
@@ -63,7 +65,6 @@ async def test_engine_deduplicates_repeated_incident_reports() -> None:
         probe=probe,
         publish=publish,
         confirmation_attempts=1,
-        registry=IncidentRegistry(),
     )
     payload = {
         "heartbeat": {"status": 0, "time": "2026-08-04 13:20:00", "msg": "HTTP 503"},
@@ -111,8 +112,11 @@ async def test_engine_waits_between_confirmation_attempts() -> None:
     assert waits == [5, 5]
 
 
-async def test_engine_retries_same_incident_after_publication_failure() -> None:
+async def test_engine_retries_same_incident_after_publication_failure_once_lease_expires(
+    tmp_path: Path,
+) -> None:
     attempts = 0
+    now = datetime(2026, 8, 4, 13, 20)
 
     async def probe(url: str) -> ProbeResult:
         return ProbeResult(False, 503, 100, url, "HTTP 503", "cloudflare")
@@ -123,7 +127,12 @@ async def test_engine_retries_same_incident_after_publication_failure() -> None:
         if attempts == 1:
             raise RuntimeError("delivery failed")
 
-    engine = TriageEngine(probe=probe, publish=publish, confirmation_attempts=1)
+    registry = DurableIncidentRegistry(
+        tmp_path / "state.sqlite3", now=lambda: now, lease_seconds=30
+    )
+    engine = TriageEngine(
+        probe=probe, publish=publish, confirmation_attempts=1, registry=registry
+    )
     payload = {
         "heartbeat": {"status": 0, "time": "2026-08-04 13:20:00", "msg": "HTTP 503"},
         "monitor": {"id": 12, "name": "Example", "url": "https://example.com/"},
@@ -132,8 +141,12 @@ async def test_engine_retries_same_incident_after_publication_failure() -> None:
     with pytest.raises(RuntimeError, match="delivery failed"):
         await engine.handle(payload)
     await engine.handle(payload)
+    assert attempts == 1  # blocked: failed reservation's lease has not expired yet
 
+    now += timedelta(seconds=31)
+    await engine.handle(payload)
     assert attempts == 2
+    registry.close()
 
 
 async def test_engine_does_not_publish_stale_transition_after_newer_recovery() -> None:

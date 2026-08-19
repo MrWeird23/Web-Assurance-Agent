@@ -15,6 +15,7 @@ class Settings:
     browser_artifact_directory: Path | None = None
     visual_baseline_directory: Path | None = None
     manual_check_concurrency: int = 1
+    state_database_path: Path | None = None
 
     @classmethod
     def from_mapping(cls, values: Mapping[str, str]) -> "Settings":
@@ -44,6 +45,7 @@ class Settings:
         manifest_path = values.get("TRIAGE_SITE_MANIFEST_PATH", "").strip()
         artifact_directory = values.get("TRIAGE_BROWSER_ARTIFACT_DIRECTORY", "").strip()
         baseline_directory = values.get("TRIAGE_VISUAL_BASELINE_DIRECTORY", "").strip()
+        state_database_path = values.get("TRIAGE_STATE_DATABASE_PATH", "").strip()
         return cls(
             webhook_token=token,
             allowed_hosts=hosts,
@@ -55,4 +57,5 @@ class Settings:
             browser_artifact_directory=Path(artifact_directory) if artifact_directory else None,
             visual_baseline_directory=Path(baseline_directory) if baseline_directory else None,
             manual_check_concurrency=manual_check_concurrency,
+            state_database_path=Path(state_database_path) if state_database_path else None,
         )

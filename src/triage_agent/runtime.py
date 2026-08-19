@@ -3,6 +3,7 @@ import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -12,6 +13,7 @@ from triage_agent.api import PageChecker, WordPressHealthChecker, create_app
 from triage_agent.baselines import BaselineStore
 from triage_agent.browser_runner import PlaywrightBrowserRunner
 from triage_agent.discord import DiscordPublisher
+from triage_agent.durable_registry import DurableIncidentRegistry
 from triage_agent.engine import Publisher, TriageEngine
 from triage_agent.manifests import load_site_manifest
 from triage_agent.probes import ProbeResult, probe_url, resolve_addresses
@@ -43,11 +45,13 @@ def build_app(settings: Settings) -> FastAPI:
 
         publisher = dry_run_publish
 
+    registry = DurableIncidentRegistry(settings.state_database_path or Path(":memory:"))
     engine = TriageEngine(
         probe=probe,
         publish=publisher,
         confirmation_attempts=settings.confirmation_attempts,
         confirmation_delay_seconds=settings.confirmation_delay_seconds,
+        registry=registry,
     )
 
     manifest_registry = None
@@ -77,6 +81,7 @@ def build_app(settings: Settings) -> FastAPI:
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         yield
         await client.aclose()
+        registry.close()
 
     return create_app(
         engine=engine,

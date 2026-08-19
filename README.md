@@ -252,6 +252,7 @@ A production deployment should place the service behind an approved TLS reverse 
 | `TRIAGE_BROWSER_ARTIFACT_DIRECTORY` | No | empty | Directory for optional browser screenshot artifacts |
 | `TRIAGE_VISUAL_BASELINE_DIRECTORY` | No | empty | Directory containing separately stored human-approved visual baselines |
 | `TRIAGE_MANUAL_CHECK_CONCURRENCY` | No | `1` | Maximum simultaneous manual browser checks per service process, from 1 to 4; excess requests receive HTTP 429 |
+| `TRIAGE_STATE_DATABASE_PATH` | No | empty | SQLite file for durable incident/publication state; unset keeps state in memory only (lost on restart, unsafe for multiple workers) |
 | `LOG_LEVEL` | No | `INFO` | Runtime log level |
 
 For Compose deployments, copy `config/sites.example.yaml` to `config/sites.yaml` and replace the

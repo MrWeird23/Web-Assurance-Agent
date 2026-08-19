@@ -1,12 +1,14 @@
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from triage_agent.classification import Incident, classify_incident
+from triage_agent.durable_registry import DurableIncidentRegistry
 from triage_agent.events import EventState, KumaEvent, parse_kuma_event
 from triage_agent.probes import ProbeResult
-from triage_agent.registry import IncidentRegistry, PublicationDecision
+from triage_agent.registry import PublicationDecision
 from triage_agent.reporting import render_discord_payload
 
 Probe = Callable[[str], Awaitable[ProbeResult]]
@@ -31,7 +33,7 @@ class TriageEngine:
         confirmation_attempts: int = 2,
         confirmation_delay_seconds: float = 0,
         sleeper: Sleeper = asyncio.sleep,
-        registry: IncidentRegistry | None = None,
+        registry: DurableIncidentRegistry | None = None,
     ) -> None:
         if confirmation_attempts < 1:
             raise ValueError("confirmation_attempts must be at least 1")
@@ -42,7 +44,7 @@ class TriageEngine:
         self._confirmation_attempts = confirmation_attempts
         self._confirmation_delay_seconds = confirmation_delay_seconds
         self._sleeper = sleeper
-        self._registry = registry or IncidentRegistry()
+        self._registry = registry or DurableIncidentRegistry(Path(":memory:"))
         self._monitor_locks: dict[int, asyncio.Lock] = {}
 
     async def handle(self, payload: dict[str, Any]) -> TriageOutcome:
@@ -60,12 +62,14 @@ class TriageEngine:
                 probes.append(await self._probe(event.url))
         incident = classify_incident(event, probes)
         discord_payload = render_discord_payload(event, incident, probes)
-        decision = self._registry.decide(event, incident)
-        if decision is PublicationDecision.PUBLISH:
-            await self._publish(discord_payload)
-            self._registry.record(event, incident)
-        elif decision is PublicationDecision.DUPLICATE:
-            self._registry.record(event, incident)
+        reservation = self._registry.reserve(event, incident)
+        if reservation.decision is PublicationDecision.PUBLISH:
+            try:
+                await self._publish(discord_payload)
+            except Exception:
+                self._registry.complete(reservation, delivered=False)
+                raise
+            self._registry.complete(reservation, delivered=True)
         return TriageOutcome(
             event=event,
             incident=incident,
