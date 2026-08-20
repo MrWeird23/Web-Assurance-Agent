@@ -1,6 +1,6 @@
 [project]
 name = "web-assurance-agent"
-version = "0.2.0"
+version = "0.6.0"
 description = "Read-only web assurance and incident triage agent"
 readme = "README.md"
 requires-python = ">=3.11"

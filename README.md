@@ -4,14 +4,18 @@ Web Assurance Agent is a read-only service that turns Uptime Kuma website events
 
 Uptime Kuma remains the fast deterministic outage detector. This service receives an authenticated event, confirms failures through tightly controlled HTTPS probes, classifies the result, suppresses duplicate reports, and either publishes a structured Discord embed or logs it in dry-run mode.
 
-> [!IMPORTANT]
-> The `0.4.0` development branch provides HTTP incident confirmation and reporting,
-> strict declarative page manifests, and an isolated Playwright/Chromium runner with
-> deterministic browser evidence. An authenticated manual endpoint can invoke checks for
-> manifest-defined pages, including narrow detection of visible WordPress and PHP failure
-> signatures, opt-in plugin-specific rendered-state assertions, safe interactions, and
-> human-approved visual regression. Authorized, site-specific read-only WordPress administrative
-> health collection is now being added; scheduling remains planned in [ROADMAP.md](ROADMAP.md).
+> [!NOTE]
+> This service provides HTTP incident confirmation and reporting, strict declarative page
+> manifests, and an isolated Playwright/Chromium runner with deterministic browser evidence.
+> An authenticated manual endpoint and a background fast/deep check scheduler — with
+> maintenance-window alert suppression — can invoke checks for manifest-defined pages, including
+> detection of visible WordPress and PHP failure signatures, authorized read-only WordPress
+> administrative health collection, opt-in plugin-specific rendered-state assertions, safe
+> interactions, and human-approved visual regression. Each check reduces its findings to a single
+> classification with a confidence and next action. See [ROADMAP.md](ROADMAP.md) for what remains
+> deferred, and [Pilot rollout](#pilot-rollout) below for the controlled-expansion runbook, which
+> is ready but has not yet been run against a production site. This is pre-1.0; see Milestone 7
+> in [ROADMAP.md](ROADMAP.md) for what a `1.0.0` release requires.
 
 ## Why this exists
 
@@ -122,7 +126,8 @@ The supplied Compose service:
 - sets `no-new-privileges`;
 - provides only a small `/tmp` tmpfs;
 - binds to `127.0.0.1:8080` by default;
-- runs one worker because incident state is currently process-local.
+- runs one worker; incident state is process-local unless `TRIAGE_STATE_DATABASE_PATH` is set
+  for durable SQLite-backed state.
 
 ## Architecture
 
@@ -377,14 +382,22 @@ docker build -t web-assurance-agent:local .
 
 ## Current limitations
 
-- Incident state is in memory and resets when the process restarts.
-- One worker is required until state becomes durable.
-- Confirmation originates from one deployment location.
-- The isolated browser runner is not yet wired to an API endpoint or scheduler.
-- Screenshot capture requires an explicit artifact directory; production retention policy,
-  screenshot comparison, and human-approved baseline management are not yet implemented.
-- Plugin-specific rendered-state assertions are implemented; safe synthetic interactions
-  (opening menus, expanding accordions, advancing sliders) are not yet implemented.
-- No automatic remediation exists or is planned for the initial milestones.
+- Confirmation originates from one deployment location; there is no multi-region or
+  high-availability confirmation.
+- No automatic remediation exists or is planned.
+- Screenshot/artifact retention policy for production is still undocumented, and no diff-image
+  artifact is written to disk — only the current screenshot path and a `visual_status` verdict.
+- External secret-manager adapters and credential rotation, and a host-side WP-CLI/Application
+  Password collector, remain deferred (see Milestone 4 in [ROADMAP.md](ROADMAP.md)).
+- Safe interactions cover navigation, accordions, sliders, tabs, and non-submitting field fills;
+  form submission, login, cart mutation, checkout, file upload, and account/content changes remain
+  deferred pending separate approval.
+- Maintenance windows are UTC, recurring-weekly, and same-day only, and only suppress scheduled
+  fast/deep checks — windows that don't fit those constraints, or manual/webhook-triggered checks,
+  still need to be tracked manually.
+- `scripts/approve_baseline.py` has no `--reject`; discard a bad pending capture by deleting its
+  files under `<baseline-dir>/pending/` and letting the next check re-capture.
+- The pilot rollout runbook and tooling (`docs/pilot-rollout.md`) are ready, but the pilot has not
+  yet been run against a production site.
 
 See [ROADMAP.md](ROADMAP.md) for the controlled path to application-level assurance.

@@ -346,7 +346,8 @@ bounded changed-region count — no baseline bytes or raw image content.
 
 ## Milestone 4 — Read-only WordPress administrative health
 
-**Status:** in progress in `0.4.0`
+**Status:** complete in `0.4.0`; external secret-manager adapters/rotation and the host-side
+WP-CLI collector remain deferred (see below)
 
 **Prerequisite:** explicit authorization for each site and access method.
 
@@ -401,7 +402,11 @@ Credentials remain site-specific. Compromise of one monitoring identity must not
 
 ## Milestone 5 — Durable state, scheduling, and reporting
 
+**Status:** complete in `0.6.0`
+
 ### 5.1 Durable incident state
+
+**Status:** complete in `0.6.0`
 
 Replace process-local memory with a transactional store before enabling multiple workers or instances.
 
@@ -416,12 +421,19 @@ Requirements:
 
 ### 5.2 Check scheduling
 
+**Status:** complete in `0.6.0`
+
 - fast checks every 1–5 minutes for critical public pages;
 - deep checks every 15–60 minutes;
 - immediate incident-triggered checks after Kuma down events;
-- jitter, concurrency limits, and per-site budgets.
+- jitter, concurrency limits, and per-site budgets;
+- optional recurring weekly UTC maintenance windows that suppress alerts from scheduled checks
+  without skipping the checks themselves (same-day windows only; see README "Current
+  limitations").
 
 ### 5.3 Expanded classifications
+
+**Status:** complete in `0.6.0`
 
 - `render_failure`
 - `javascript_failure`
@@ -436,6 +448,9 @@ Each classification reports deterministic evidence, confidence, and the cheapest
 
 ### 5.4 Extended reports
 
+**Status:** complete in `0.6.0`; no diff-image artifact is written to disk (current screenshot
+path plus a `visual_status` verdict stands in for it)
+
 Include, where policy permits:
 
 - site/page/viewport;
@@ -449,6 +464,10 @@ Include, where policy permits:
 Existing monitoring notifications remain independent fallback paths.
 
 ## Milestone 6 — Controlled pilot and gradual rollout
+
+**Status:** runbook and tooling (`docs/pilot-rollout.md`, `docs/pilot-inventory.md`,
+`scripts/approve_baseline.py`) ready in `0.6.0`; the pilot itself has not yet been run against a
+production site
 
 1. Select a small approved set of public pages.
 2. Define desktop and mobile manifests.
@@ -485,6 +504,28 @@ Browser milestones must additionally prove in the built container that:
 - desktop and mobile screenshots have stable dimensions;
 - scripts cannot request unauthorized or non-public destinations;
 - automated tests modify no external system.
+
+## Milestone 7 — 1.0 readiness
+
+**Status:** not started
+
+`pyproject.toml` and this codebase currently track pre-1.0 milestone versions (`0.6.0` after
+Milestone 6). Cutting `1.0.0` is a deliberate stability promise, not an automatic bump once the
+milestones above merge. It requires:
+
+- the Milestone 6 pilot actually run to completion against a real production site, with noise and
+  accuracy reviewed and judged acceptable — not just the runbook and tooling existing;
+- a documented screenshot/artifact retention policy, implemented and enforced;
+- `scripts/approve_baseline.py --reject`, so a bad pending baseline capture can be discarded
+  without manually deleting files;
+- a decision on the deferred Milestone 4 items (external secret-manager adapters/rotation,
+  host-side WP-CLI collector) — either implemented, or explicitly declared out of scope for 1.0;
+- a declared stability contract for the manual check endpoint and webhook response schemas, since
+  both have gained fields every milestone through `0.6.0`;
+- `pyproject.toml` version brought in sync with the milestone actually shipped (it still read
+  `0.2.0` after Milestone 6 merged — see [README.md](README.md)).
+
+Until these close, use pre-1.0 versions (e.g. `0.7.0`) for further milestone work.
 
 ## Immediate implementation order
 
