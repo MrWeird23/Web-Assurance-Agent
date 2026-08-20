@@ -165,21 +165,28 @@ async def run_page_check(
                 allowed_hosts=allowed_hosts,
             )
             wordpress_health.append(_wordpress_health_summary(health_check.id, health))
-            if wordpress_alert_publisher is not None and wordpress_health_failure_codes(health):
-                try:
-                    await wordpress_alert_publisher(
-                        render_wordpress_health_discord_payload(
-                            page_id=page.id,
-                            check_id=health_check.id,
-                            result=health,
-                        )
-                    )
-                except Exception:
-                    logger.exception(
-                        "wordpress_health_alert_delivery_failed page_id=%s check_id=%s",
+            if wordpress_health_failure_codes(health):
+                if wordpress_alert_publisher is None:
+                    logger.info(
+                        "wordpress_health_alert_suppressed page_id=%s check_id=%s",
                         page.id,
                         health_check.id,
                     )
+                else:
+                    try:
+                        await wordpress_alert_publisher(
+                            render_wordpress_health_discord_payload(
+                                page_id=page.id,
+                                check_id=health_check.id,
+                                result=health,
+                            )
+                        )
+                    except Exception:
+                        logger.exception(
+                            "wordpress_health_alert_delivery_failed page_id=%s check_id=%s",
+                            page.id,
+                            health_check.id,
+                        )
     evaluations = [evaluate_browser_evidence(item) for item in evidence]
     failed_viewports = [
         item.device_profile

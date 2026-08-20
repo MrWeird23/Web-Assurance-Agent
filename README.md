@@ -286,7 +286,9 @@ time, end time) during which scheduled fast/deep checks still run and record evi
 but any resulting incident is suppressed rather than published to Discord. This is meant for known
 deploy/backup windows so they stop generating alert noise. Manual `/checks/pages/{page_id}` calls
 and real Uptime Kuma webhooks are never suppressed, only scheduled checks are — an outage that
-persists past the window's end will alert as soon as the next check runs outside it.
+persists past the window's end will alert on the next check that runs outside it, and deep checks
+have no dedup registry, so it keeps alerting on every deep-check interval for as long as it stays
+unhealthy.
 
 ### Browser check classification
 
