@@ -309,6 +309,73 @@ async def test_playwright_runner_captures_intercepted_healthy_page() -> None:
     assert evidence.required_selector_results[0].width > 0
     assert evidence.required_selector_results[0].height > 0
     assert evidence.timed_out is False
+    assert evidence.page_width > 0
+    assert evidence.page_height > 0
+    assert evidence.browser_version != ""
+
+
+async def test_playwright_runner_waits_for_ready_selector_before_capturing() -> None:
+    async def resolver(host: str) -> set[str]:
+        return {"93.184.216.34"}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html; charset=utf-8"},
+            content=b'<main id="app-ready">Loaded</main>',
+        )
+
+    from triage_agent.browser_runner import PlaywrightBrowserRunner
+
+    viewport = ViewportManifest(id="desktop", width=1440, height=900, device_scale_factor=1.0)
+    page = PageManifest(
+        id="home",
+        url="https://example.com/",
+        viewports=(viewport,),
+        ready_selector="#app-ready",
+        required_text=("Loaded",),
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        evidence = await PlaywrightBrowserRunner(client=client, resolver=resolver).run(
+            page=page,
+            viewport=viewport,
+            allowed_hosts={"example.com"},
+        )
+
+    assert evidence.timed_out is False
+    assert evidence.required_text_results[0].found is True
+
+
+async def test_playwright_runner_times_out_when_ready_selector_never_appears() -> None:
+    async def resolver(host: str) -> set[str]:
+        return {"93.184.216.34"}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html; charset=utf-8"},
+            content=b"<main>No matching element</main>",
+        )
+
+    from triage_agent.browser_runner import PlaywrightBrowserRunner
+
+    viewport = ViewportManifest(id="desktop", width=1440, height=900, device_scale_factor=1.0)
+    page = PageManifest(
+        id="home",
+        url="https://example.com/",
+        viewports=(viewport,),
+        ready_selector="#never-appears",
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        evidence = await PlaywrightBrowserRunner(
+            client=client, resolver=resolver, total_timeout_ms=1_000
+        ).run(
+            page=page,
+            viewport=viewport,
+            allowed_hosts={"example.com"},
+        )
+
+    assert evidence.timed_out is True
 
 
 async def test_playwright_runner_captures_collapsed_required_geometry() -> None:

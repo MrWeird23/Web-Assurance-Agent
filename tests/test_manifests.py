@@ -179,6 +179,23 @@ def test_rejects_destructive_interaction_verbs() -> None:
         parse_site_manifest(destructive)
 
 
+def test_parses_optional_ready_selector() -> None:
+    manifest = VALID_MANIFEST.replace(
+        "        required_text:\n",
+        "        ready_selector: main\n        required_text:\n",
+    )
+
+    registry = parse_site_manifest(manifest)
+
+    assert registry.page("home").ready_selector == "main"
+
+
+def test_ready_selector_defaults_to_none() -> None:
+    registry = parse_site_manifest(VALID_MANIFEST)
+
+    assert registry.page("home").ready_selector is None
+
+
 def test_parses_fill_interaction_with_value() -> None:
     manifest = VALID_MANIFEST.replace(
         '          - action: click\n            selector: button[aria-expanded="false"]\n',

@@ -59,9 +59,12 @@ class StubPageChecker:
                 height=viewport.height,
                 device_scale_factor=viewport.device_scale_factor,
             ),
+            page_width=viewport.width,
+            page_height=viewport.height,
             device_profile=viewport_id,
             document_status=200,
             title="Example",
+            browser_version="120.0.6099.109",
             required_text_results=(TextResult(value="Welcome", found=True),),
             required_selector_results=(
                 SelectorResult(selector="main", found=True, visible=True, width=100, height=100),

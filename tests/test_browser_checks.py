@@ -24,9 +24,12 @@ def healthy_evidence() -> BrowserEvidence:
         requested_url="https://example.com/",
         final_url="https://example.com/",
         viewport=Viewport(width=1440, height=900, device_scale_factor=1.0),
+        page_width=1440,
+        page_height=2200,
         device_profile="desktop",
         document_status=200,
         title="Example Site",
+        browser_version="120.0.6099.109",
         required_text_results=(TextResult(value="Welcome", found=True),),
         required_selector_results=(
             SelectorResult(
