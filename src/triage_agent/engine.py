@@ -77,6 +77,12 @@ class TriageEngine:
             logger.info(
                 "maintenance_window_suppressed_publish monitor_id=%s", event.monitor_id
             )
+            # Skip reserve()/complete() entirely: reserve() leaves an active
+            # reservation row keyed on (monitor_id, incident_kind, observed_at),
+            # and complete(delivered=False) doesn't clear it. A later
+            # non-suppressed retry of this same incident would then see that
+            # stale row and get DUPLICATE, blocking a publish that never
+            # happened. No registry call = no trace = clean reserve later.
             return TriageOutcome(
                 event=event,
                 incident=incident,
