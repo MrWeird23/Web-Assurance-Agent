@@ -4,7 +4,7 @@
 
 **Goal:** A page can declare recurring weekly UTC maintenance windows in the site manifest; the background scheduler (fast + deep checks) still runs and records evidence during a window but suppresses the Discord alert, and re-alerts automatically once the window ends if the page is still failing.
 
-**Architecture:** A new `MaintenanceWindow` Pydantic model + `maintenance_windows` field on `PageManifest` (`manifests.py`), plus a pure `is_within_maintenance_window(windows, now)` predicate next to it. `TriageEngine.handle_event` gains a `suppress_publish` flag so the fast-check path can skip the Discord send while still doing normal dedup bookkeeping (`delivered=False`, so it retries later). The deep-check path in `runtime.py` reuses the existing optional-publisher parameters — no engine changes needed there — by passing `None` for the publisher when the page is in-window.
+**Architecture:** A new `MaintenanceWindow` Pydantic model + `maintenance_windows` field on `PageManifest` (`manifests.py`), plus a pure `is_within_maintenance_window(windows, now)` predicate next to it. `TriageEngine.handle_event` gains a `suppress_publish` flag so the fast-check path can skip the Discord send; when set, it skips the dedup registry entirely (no `reserve()`/`complete()` call) rather than reserving then completing with `delivered=False` — that literal approach leaves an active, undelivered reservation row that would wrongly `DUPLICATE`-block a later legitimate publish for the same incident. The deep-check path in `runtime.py` reuses the existing optional-publisher parameters — no engine changes needed there — by passing `None` for the publisher when the page is in-window.
 
 **Tech Stack:** Python, Pydantic (existing `StrictManifestModel` base), pytest.
 
