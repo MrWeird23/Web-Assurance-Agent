@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: pytest
+        run: uv run pytest -q
+
+      - name: ruff check
+        run: uv run ruff check .
+
+      - name: mypy
+        run: uv run mypy src tests
+
+      - name: docker compose config
+        env:
+          TRIAGE_WEBHOOK_TOKEN: configured-test-value
+          TRIAGE_ALLOWED_HOSTS: example.com
+        run: docker compose config --quiet
+
+      - name: docker build
+        run: docker build -t web-assurance-agent:ci .
