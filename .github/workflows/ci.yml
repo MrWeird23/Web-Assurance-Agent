@@ -19,7 +19,12 @@ jobs:
         run: uv sync
 
       - name: Install Playwright browsers
-        run: uv run playwright install --with-deps chromium
+        run: |
+          if uv run python -c "import playwright" 2>/dev/null; then
+            uv run playwright install --with-deps chromium
+          else
+            echo "playwright is not a project dependency yet; skipping browser install"
+          fi
 
       - name: pytest
         run: uv run pytest -q
