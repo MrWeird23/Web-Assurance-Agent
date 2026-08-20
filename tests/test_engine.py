@@ -8,7 +8,19 @@ import pytest
 from triage_agent.classification import IncidentKind
 from triage_agent.durable_registry import DurableIncidentRegistry
 from triage_agent.engine import TriageEngine
+from triage_agent.events import EventState, KumaEvent
 from triage_agent.probes import ProbeResult
+
+
+def _kuma_event(*, monitor_id: int, url: str, down: bool) -> KumaEvent:
+    return KumaEvent(
+        monitor_id=monitor_id,
+        monitor_name="Example",
+        url=url,
+        state=EventState.DOWN if down else EventState.UP,
+        error="HTTP 503" if down else "",
+        observed_at="2026-08-04T13:20:00+00:00",
+    )
 
 
 async def test_engine_confirms_down_event_and_publishes_report() -> None:
@@ -275,3 +287,63 @@ async def test_engine_serializes_concurrent_events_for_same_monitor() -> None:
     await asyncio.gather(engine.handle(payload), engine.handle(payload))
 
     assert len(published) == 1
+
+
+async def test_engine_suppresses_publish_when_requested_but_still_classifies() -> None:
+    published: list[dict[str, Any]] = []
+
+    async def probe(url: str) -> ProbeResult:
+        return ProbeResult(False, 503, 100, url, "HTTP 503", "cloudflare")
+
+    async def publish(payload: dict[str, Any]) -> None:
+        published.append(payload)
+
+    engine = TriageEngine(probe=probe, publish=publish, confirmation_attempts=1)
+    outcome = await engine.handle_event(
+        _kuma_event(monitor_id=12, url="https://example.com/", down=True),
+        suppress_publish=True,
+    )
+
+    assert outcome.incident.kind is IncidentKind.CONFIRMED_OUTAGE
+    assert published == []
+
+
+async def test_engine_retries_suppressed_incident_on_next_event() -> None:
+    published: list[dict[str, Any]] = []
+
+    async def probe(url: str) -> ProbeResult:
+        return ProbeResult(False, 503, 100, url, "HTTP 503", "cloudflare")
+
+    async def publish(payload: dict[str, Any]) -> None:
+        published.append(payload)
+
+    engine = TriageEngine(probe=probe, publish=publish, confirmation_attempts=1)
+    event = _kuma_event(monitor_id=12, url="https://example.com/", down=True)
+
+    await engine.handle_event(event, suppress_publish=True)
+    await engine.handle_event(event)  # maintenance window over: same incident, no suppression
+
+    assert len(published) == 1
+
+
+async def test_engine_does_not_call_on_publish_hook_when_suppressed() -> None:
+    hook_calls: list[Any] = []
+
+    async def probe(url: str) -> ProbeResult:
+        return ProbeResult(False, 503, 100, url, "HTTP 503", "cloudflare")
+
+    async def publish(_payload: dict[str, Any]) -> None:
+        return None
+
+    async def on_publish(event: Any, incident: Any) -> None:
+        hook_calls.append(incident.kind)
+
+    engine = TriageEngine(
+        probe=probe, publish=publish, confirmation_attempts=1, on_publish=on_publish
+    )
+    await engine.handle_event(
+        _kuma_event(monitor_id=12, url="https://example.com/", down=True),
+        suppress_publish=True,
+    )
+
+    assert hook_calls == []

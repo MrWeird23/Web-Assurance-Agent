@@ -56,12 +56,16 @@ class TriageEngine:
     async def handle(self, payload: dict[str, Any]) -> TriageOutcome:
         return await self.handle_event(parse_kuma_event(payload))
 
-    async def handle_event(self, event: KumaEvent) -> TriageOutcome:
+    async def handle_event(
+        self, event: KumaEvent, *, suppress_publish: bool = False
+    ) -> TriageOutcome:
         monitor_lock = self._monitor_locks.setdefault(event.monitor_id, asyncio.Lock())
         async with monitor_lock:
-            return await self._handle_event(event)
+            return await self._handle_event(event, suppress_publish=suppress_publish)
 
-    async def _handle_event(self, event: KumaEvent) -> TriageOutcome:
+    async def _handle_event(
+        self, event: KumaEvent, *, suppress_publish: bool = False
+    ) -> TriageOutcome:
         probes = []
         if event.state is EventState.DOWN:
             for attempt in range(self._confirmation_attempts):
@@ -69,6 +73,16 @@ class TriageEngine:
                     await self._sleeper(self._confirmation_delay_seconds)
                 probes.append(await self._probe(event.url))
         incident = classify_incident(event, probes)
+        if suppress_publish:
+            logger.info(
+                "maintenance_window_suppressed_publish monitor_id=%s", event.monitor_id
+            )
+            return TriageOutcome(
+                event=event,
+                incident=incident,
+                probes=probes,
+                discord_payload=render_discord_payload(event, incident, probes),
+            )
         reservation = self._registry.reserve(event, incident)
         discord_payload = render_discord_payload(
             event,
