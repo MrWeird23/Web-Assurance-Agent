@@ -19,7 +19,12 @@ from triage_agent.discord import DiscordPublisher, DiscordPublishError
 from triage_agent.durable_registry import DurableIncidentRegistry
 from triage_agent.engine import Publisher, TriageEngine
 from triage_agent.events import EventState, KumaEvent
-from triage_agent.manifests import ManifestRegistry, PageManifest, load_site_manifest
+from triage_agent.manifests import (
+    ManifestRegistry,
+    PageManifest,
+    is_within_maintenance_window,
+    load_site_manifest,
+)
 from triage_agent.probes import ProbeResult, probe_url, resolve_addresses
 from triage_agent.reporting import render_browser_check_discord_payload
 from triage_agent.scheduler import CheckScheduler
@@ -98,39 +103,50 @@ def build_app(settings: Settings) -> FastAPI:
         async def run_fast_check(page: PageManifest) -> None:
             assert page.kuma_monitor_id is not None  # enforced by manifest validation
             probe_result = await probe(page.url)
+            now = datetime.now(UTC)
             event = KumaEvent(
                 monitor_id=page.kuma_monitor_id,
                 monitor_name=page.id,
                 url=page.url,
                 state=EventState.UP if probe_result.ok else EventState.DOWN,
                 error=probe_result.error or "",
-                observed_at=datetime.now(UTC).isoformat(),
+                observed_at=now.isoformat(),
             )
-            await engine.handle_event(event)
+            await engine.handle_event(
+                event, suppress_publish=is_within_maintenance_window(page.maintenance_windows, now)
+            )
 
         async def run_deep_check(page: PageManifest) -> None:
             assert manifest_registry is not None
             assert page_checker is not None
+            in_maintenance_window = is_within_maintenance_window(
+                page.maintenance_windows, datetime.now(UTC)
+            )
             result = await run_page_check(
                 page=page,
                 allowed_hosts=set(manifest_registry.allowed_hosts(page.id)),
                 site_id=manifest_registry.site_id(page.id),
                 page_checker=page_checker,
                 wordpress_health_checker=wordpress_health_checker,
-                wordpress_alert_publisher=publisher,
+                wordpress_alert_publisher=None if in_maintenance_window else publisher,
             )
             if result["classification"] not in ("healthy", "baseline_pending"):
-                try:
-                    await publisher(
-                        render_browser_check_discord_payload(
-                            page_id=page.id,
-                            failed_viewports=result["evidence"]["failed_viewports"],
-                            failure_codes=result["evidence"]["failure_codes"],
-                            failed_plugin_assertions=result["evidence"]["failed_plugin_assertions"],
+                if in_maintenance_window:
+                    logger.info("maintenance_window_suppressed_alert page_id=%s", page.id)
+                else:
+                    try:
+                        await publisher(
+                            render_browser_check_discord_payload(
+                                page_id=page.id,
+                                failed_viewports=result["evidence"]["failed_viewports"],
+                                failure_codes=result["evidence"]["failure_codes"],
+                                failed_plugin_assertions=result["evidence"][
+                                    "failed_plugin_assertions"
+                                ],
+                            )
                         )
-                    )
-                except DiscordPublishError:
-                    logger.exception("deep_check_alert_delivery_failed page_id=%s", page.id)
+                    except DiscordPublishError:
+                        logger.exception("deep_check_alert_delivery_failed page_id=%s", page.id)
 
         scheduler = CheckScheduler(
             manifest_registry=manifest_registry,
