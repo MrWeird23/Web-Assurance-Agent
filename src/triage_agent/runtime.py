@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -7,13 +8,16 @@ from typing import Any
 import httpx
 from fastapi import FastAPI
 
-from triage_agent.api import create_app
+from triage_agent.api import PageChecker, WordPressHealthChecker, create_app
+from triage_agent.baselines import BaselineStore
 from triage_agent.browser_runner import PlaywrightBrowserRunner
 from triage_agent.discord import DiscordPublisher
 from triage_agent.engine import Publisher, TriageEngine
 from triage_agent.manifests import load_site_manifest
 from triage_agent.probes import ProbeResult, probe_url, resolve_addresses
 from triage_agent.settings import Settings
+from triage_agent.visual_page_checker import VisualPageChecker
+from triage_agent.wordpress_runtime import EnvironmentSecretLoader, WordPressRuntimeChecker
 
 logger = logging.getLogger(__name__)
 
@@ -47,13 +51,27 @@ def build_app(settings: Settings) -> FastAPI:
     )
 
     manifest_registry = None
-    page_checker = None
+    page_checker: PageChecker | None = None
+    wordpress_health_checker: WordPressHealthChecker | None = None
     if settings.site_manifest_path is not None:
         manifest_registry = load_site_manifest(settings.site_manifest_path)
-        page_checker = PlaywrightBrowserRunner(
+        browser_checker = PlaywrightBrowserRunner(
             resolver=resolve_addresses,
             artifact_directory=settings.browser_artifact_directory,
         )
+        if settings.visual_baseline_directory is not None:
+            page_checker = VisualPageChecker(
+                checker=browser_checker,
+                baseline_store=BaselineStore(settings.visual_baseline_directory),
+            )
+        else:
+            page_checker = browser_checker
+        if any(page.wordpress_health for page in manifest_registry.pages()):
+            wordpress_health_checker = WordPressRuntimeChecker(
+                client=client,
+                resolver=resolve_addresses,
+                secrets=EnvironmentSecretLoader(os.environ),
+            )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -66,5 +84,7 @@ def build_app(settings: Settings) -> FastAPI:
         lifespan=lifespan,
         manifest_registry=manifest_registry,
         page_checker=page_checker,
+        wordpress_health_checker=wordpress_health_checker,
+        wordpress_alert_publisher=publisher,
         manual_check_concurrency=settings.manual_check_concurrency,
     )

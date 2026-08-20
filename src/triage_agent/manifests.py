@@ -98,6 +98,7 @@ class ViewportManifest(StrictManifestModel):
     width: StrictInt = Field(ge=1, le=7680)
     height: StrictInt = Field(ge=1, le=7680)
     device_scale_factor: StrictFloat = Field(ge=0.25, le=4.0)
+    visual_threshold_percentage: StrictFloat | None = Field(default=None, ge=0.0, le=100.0)
 
 
 FillValue = Annotated[str, StringConstraints(strict=True, max_length=500)]
@@ -126,6 +127,12 @@ class PluginAssertionManifest(StrictManifestModel):
     required_selectors: tuple[NonEmptyText, ...] = Field(min_length=1, max_length=20)
 
 
+class WordPressHealthManifest(StrictManifestModel):
+    id: Identifier
+    endpoint: NonEmptyText
+    token_secret_ref: NonEmptyText
+
+
 class PageManifest(StrictManifestModel):
     id: Identifier
     url: NonEmptyText
@@ -140,6 +147,7 @@ class PageManifest(StrictManifestModel):
     application_shortcodes: tuple[ShortcodeName, ...] = Field(default=(), max_length=20)
     plugin_assertions: tuple[PluginAssertionManifest, ...] = Field(default=(), max_length=20)
     interactions: tuple[InteractionManifest, ...] = Field(default=(), max_length=20)
+    wordpress_health: tuple[WordPressHealthManifest, ...] = Field(default=(), max_length=5)
 
 
 class SiteManifest(StrictManifestModel):
@@ -158,16 +166,24 @@ class ManifestRegistry:
     manifest: SiteManifestFile
     _pages: Mapping[str, PageManifest]
     _allowed_hosts: Mapping[str, frozenset[str]]
+    _site_ids: Mapping[str, str]
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "_pages", MappingProxyType(dict(self._pages)))
         object.__setattr__(self, "_allowed_hosts", MappingProxyType(dict(self._allowed_hosts)))
+        object.__setattr__(self, "_site_ids", MappingProxyType(dict(self._site_ids)))
 
     def page(self, page_id: str) -> PageManifest:
         return self._pages[page_id]
 
     def allowed_hosts(self, page_id: str) -> frozenset[str]:
         return self._allowed_hosts[page_id]
+
+    def site_id(self, page_id: str) -> str:
+        return self._site_ids[page_id]
+
+    def pages(self) -> tuple[PageManifest, ...]:
+        return tuple(self._pages.values())
 
 
 def load_site_manifest(path: Path) -> ManifestRegistry:
@@ -252,4 +268,10 @@ def parse_site_manifest(text: str) -> ManifestRegistry:
     page_allowed_hosts = {
         page.id: frozenset(site.allowed_hosts) for site in manifest.sites for page in site.pages
     }
-    return ManifestRegistry(manifest=manifest, _pages=pages, _allowed_hosts=page_allowed_hosts)
+    page_site_ids = {page.id: site.id for site in manifest.sites for page in site.pages}
+    return ManifestRegistry(
+        manifest=manifest,
+        _pages=pages,
+        _allowed_hosts=page_allowed_hosts,
+        _site_ids=page_site_ids,
+    )

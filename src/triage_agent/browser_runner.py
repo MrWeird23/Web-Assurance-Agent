@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import hashlib
 import ipaddress
 import os
@@ -843,15 +844,23 @@ class PlaywrightBrowserRunner:
                             wait_until="networkidle",
                             timeout=self.navigation_timeout_ms,
                         )
-                        await browser_page.add_style_tag(
-                            content=(
-                                "*,*::before,*::after{"
-                                "animation:none!important;"
-                                "transition:none!important;"
-                                "caret-color:transparent!important;"
-                                "scroll-behavior:auto!important}"
+                        # Best-effort: animation/transition/caret suppression is
+                        # already handled CSP-safely by the screenshot()
+                        # `animations`/`caret` options below; this only adds
+                        # scroll-behavior suppression on top. A page with a strict
+                        # style-src CSP (no 'unsafe-inline'/nonce match) blocks this
+                        # injected <style> tag — that must not abort the rest of
+                        # evidence collection.
+                        with contextlib.suppress(PlaywrightError):
+                            await browser_page.add_style_tag(
+                                content=(
+                                    "*,*::before,*::after{"
+                                    "animation:none!important;"
+                                    "transition:none!important;"
+                                    "caret-color:transparent!important;"
+                                    "scroll-behavior:auto!important}"
+                                )
                             )
-                        )
                         if page.ready_selector is not None:
                             await browser_page.locator(page.ready_selector).first.wait_for(
                                 state="visible", timeout=self.navigation_timeout_ms

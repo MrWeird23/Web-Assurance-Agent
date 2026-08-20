@@ -1,7 +1,8 @@
 import asyncio
 import json
+import logging
 import secrets
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from typing import Any, Protocol
 
@@ -11,8 +12,15 @@ from triage_agent import __version__
 from triage_agent.browser_checks import BrowserEvidence, evaluate_browser_evidence
 from triage_agent.discord import DiscordPublishError
 from triage_agent.manifests import ManifestRegistry, PageManifest, ViewportManifest
+from triage_agent.wordpress_health import WordPressHealthResult
+from triage_agent.wordpress_reporting import (
+    render_wordpress_health_discord_payload,
+    wordpress_health_failure_codes,
+)
 
 MAX_WEBHOOK_BODY_BYTES = 65_536
+AlertPublisher = Callable[[dict[str, Any]], Awaitable[None]]
+logger = logging.getLogger(__name__)
 
 
 class Engine(Protocol):
@@ -29,6 +37,17 @@ class PageChecker(Protocol):
     ) -> BrowserEvidence: ...
 
 
+class WordPressHealthChecker(Protocol):
+    async def run(
+        self,
+        *,
+        endpoint: str,
+        site_id: str,
+        token_secret_ref: str,
+        allowed_hosts: set[str],
+    ) -> WordPressHealthResult: ...
+
+
 def create_app(
     *,
     engine: Engine,
@@ -36,6 +55,8 @@ def create_app(
     lifespan: Callable[[FastAPI], AbstractAsyncContextManager[None]] | None = None,
     manifest_registry: ManifestRegistry | None = None,
     page_checker: PageChecker | None = None,
+    wordpress_health_checker: WordPressHealthChecker | None = None,
+    wordpress_alert_publisher: AlertPublisher | None = None,
     manual_check_concurrency: int = 1,
 ) -> FastAPI:
     app = FastAPI(
@@ -85,6 +106,7 @@ def create_app(
             try:
                 page = manifest_registry.page(page_id)
                 allowed_hosts = set(manifest_registry.allowed_hosts(page_id))
+                site_id = manifest_registry.site_id(page_id)
             except KeyError as exc:
                 raise HTTPException(status_code=404, detail="Unknown page") from exc
 
@@ -97,6 +119,7 @@ def create_app(
                     headers={"Retry-After": "1"},
                 ) from error
 
+            wordpress_health = []
             try:
                 evidence = [
                     await page_checker.run(
@@ -106,6 +129,35 @@ def create_app(
                     )
                     for viewport in page.viewports
                 ]
+                if wordpress_health_checker is not None:
+                    for health_check in page.wordpress_health:
+                        health = await wordpress_health_checker.run(
+                            endpoint=health_check.endpoint,
+                            site_id=site_id,
+                            token_secret_ref=health_check.token_secret_ref,
+                            allowed_hosts=allowed_hosts,
+                        )
+                        wordpress_health.append(
+                            _wordpress_health_summary(health_check.id, health)
+                        )
+                        if (
+                            wordpress_alert_publisher is not None
+                            and wordpress_health_failure_codes(health)
+                        ):
+                            try:
+                                await wordpress_alert_publisher(
+                                    render_wordpress_health_discord_payload(
+                                        page_id=page.id,
+                                        check_id=health_check.id,
+                                        result=health,
+                                    )
+                                )
+                            except Exception:
+                                logger.exception(
+                                    "wordpress_health_alert_delivery_failed page_id=%s check_id=%s",
+                                    page.id,
+                                    health_check.id,
+                                )
             finally:
                 manual_check_slots.put_nowait(None)
             evaluations = [evaluate_browser_evidence(item) for item in evidence]
@@ -116,6 +168,16 @@ def create_app(
             ]
             failure_codes = sorted(
                 {finding.code for evaluation in evaluations for finding in evaluation.failures}
+            )
+            failure_codes = sorted(
+                {
+                    *failure_codes,
+                    *(
+                        code
+                        for summary in wordpress_health
+                        for code in summary["failure_codes"]
+                    ),
+                }
             )
             failed_plugin_assertions = sorted(
                 {
@@ -128,7 +190,7 @@ def create_app(
             return {
                 "check_id": secrets.token_hex(16),
                 "page_id": page.id,
-                "classification": "healthy" if not failed_viewports else "failed",
+                "classification": "failed" if failure_codes else "healthy",
                 "evidence": {
                     "viewports_checked": len(evidence),
                     "failed_viewports": failed_viewports,
@@ -138,9 +200,32 @@ def create_app(
                 "artifacts": [
                     item.screenshot.path for item in evidence if item.screenshot is not None
                 ],
+                "wordpress_health": wordpress_health,
             }
 
     return app
+
+
+def _wordpress_health_summary(
+    check_id: str,
+    health: WordPressHealthResult,
+) -> dict[str, Any]:
+    failure_codes = wordpress_health_failure_codes(health)
+    return {
+        "id": check_id,
+        "ok": health.ok,
+        "core_version": health.core_version,
+        "core_update_available": health.core_update_available,
+        "plugin_updates": list(health.plugin_updates),
+        "site_health_status": health.site_health_status,
+        "critical_test_count": health.critical_test_count,
+        "overdue_cron_count": health.overdue_cron_count,
+        "failing_cron_count": health.failing_cron_count,
+        "rest_api_ok": health.rest_api_ok,
+        "fatal_error_codes": list(health.fatal_error_codes),
+        "error_code": health.error_code,
+        "failure_codes": list(failure_codes),
+    }
 
 
 def _authenticate(request: Request, webhook_token: str) -> None:

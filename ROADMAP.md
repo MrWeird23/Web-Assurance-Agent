@@ -259,7 +259,7 @@ Deferred pending separate approval:
 
 ### 3.1 Deterministic screenshot normalization
 
-**Status:** complete in `0.2.0`
+**Status:** complete in `0.3.0`
 
 - wait for declared ready selectors, fonts, and images;
 - disable animations, transitions, caret, and smooth scrolling;
@@ -274,6 +274,20 @@ now also records the full document's scroll dimensions (`page_width`/`page_heigh
 the fixed viewport) and the Chromium `browser_version` actually used.
 
 ### 3.2 Perceptual comparison
+
+**Status:** complete in `0.3.0`
+
+`compare_screenshots` decodes baseline/current PNG bytes with Pillow and computes a normalized
+perceptual difference score (mean per-pixel luma delta, 0.0-1.0) and a changed-pixel percentage
+(delta above a per-pixel tolerance, ignoring anti-aliasing noise) purely from the diff image's
+histogram — no per-pixel Python loop. Changed regions are found by flagging a coarse tile grid and
+merging adjacent flagged tiles into bounding boxes; a dimension mismatch between baseline and
+current is treated as a maximal, whole-page difference rather than raised as an error. The function
+is a pure, standalone comparison: it takes screenshot bytes and path references in, and returns a
+`VisualDiffResult` (score, percentage, regions, a highlighted diff PNG, and `exceeds_threshold`
+against a caller-supplied per-page/per-viewport threshold) — it does not read or write baselines,
+and is not yet wired into `BrowserEvidence` or the runner, since baseline storage and approval
+belong to 3.3. `exceeds_threshold` is evidence for the caller to classify, not an automatic outage.
 
 Planned files:
 
@@ -297,13 +311,42 @@ Policy:
 
 ### 3.3 Human-approved baselines
 
+**Status:** complete in `0.3.0`
+
+`BaselineStore` (`src/triage_agent/baselines.py`) is a filesystem-backed store, independent of
+`visual_diff.py` and not yet wired into it or into `BrowserEvidence`. `capture()` writes a screenshot
+to `pending/` and records its hash and capture time but never makes it a usable baseline. Only
+`approve()` — given an operator label — copies that capture into `approved/` and appends an
+immutable record (page ID, viewport, hash, capture time, operator label, approval time) to an
+append-only `audit.jsonl`; `current()` reads the latest such record per page/viewport, and
+`history()` returns the full trail. Replacing an approved baseline is just another capture+approve
+cycle, so every replacement is itself an audit record — nothing is ever overwritten or deleted.
+`approved/` and `pending/` are separate subdirectories, distinct from wherever a caller stores
+incident/current-run screenshots. Page and viewport identifiers are validated against the same
+`[a-z0-9]+(-[a-z0-9]+)*` shape as manifest IDs, closing off path traversal through crafted IDs.
+
 - first capture is `baseline_pending`;
 - no automatic baseline acceptance;
 - approval records page ID, viewport, hash, capture time, and operator label;
 - replacement requires an explicit action and audit record;
 - approved baselines and incident artifacts are stored separately.
 
+### 3.4 End-to-end visual evaluation
+
+**Status:** complete in `0.3.0`
+
+Manifest viewports may opt into visual comparison with a bounded
+`visual_threshold_percentage`. The runtime decorates the existing read-only Playwright checker with
+`VisualPageChecker`, loads only human-approved baselines from the separately mounted baseline store,
+and evaluates the current screenshot with the perceptual comparison from 3.2. A missing approved
+baseline produces informational `baseline_pending` evidence and never auto-accepts the current
+capture. A comparison above threshold produces the stable `visual_regression` failure; matching
+captures remain healthy. Browser evidence exposes only status, changed-pixel percentage, and a
+bounded changed-region count — no baseline bytes or raw image content.
+
 ## Milestone 4 — Read-only WordPress administrative health
+
+**Status:** in progress in `0.4.0`
 
 **Prerequisite:** explicit authorization for each site and access method.
 
@@ -313,15 +356,46 @@ Preferred access order:
 2. least-privilege WordPress Application Password;
 3. host-side WP-CLI collector where authorized.
 
-Potential evidence:
+Current implementation (4.1):
 
-- core version and update state;
-- active plugin/theme inventory and versions;
-- required plugin state;
-- approved Site Health results;
-- overdue or failing WP-Cron events;
-- REST API health;
-- narrowly scoped fatal/plugin error evidence.
+- `WordPressHealthManifest` declares an endpoint and a `token_secret_ref` per site;
+- the caller must provide the actual token through the runtime's secret loader
+  (`WordPressHealthManifest` itself stores no secret);
+- `fetch_wordpress_health` uses the existing `validate_probe_url`/`validate_resolved_addresses`
+  boundaries, connects to a resolved IP while preserving Host and TLS SNI, rejects redirects,
+  and bounds response size to 64 KiB;
+- response is parsed into a strict pydantic model with `extra="forbid"` and typed fields;
+- the result exposes only typed evidence: core/theme version, pending plugin updates,
+  site health status, overdue/failing cron, REST API state, and a small tuple of fatal-error
+  codes. No raw response body is retained.
+
+Current implementation (4.2):
+
+- environment secrets are scoped by manifest site and reference as
+  `TRIAGE_SECRET_<SITE_ID>_<REFERENCE>`; missing or short values fail closed before network access;
+- the authenticated manual page check runs WordPress health collection under the same bounded
+  concurrency permit as browser collection;
+- WordPress health failures contribute to the top-level `failed` classification and stable failure
+  codes, including typed collection errors, core/theme updates, critical Site Health, cron failures,
+  REST API failure, and fatal-error evidence;
+- API output excludes endpoint URLs, secret references, credentials, and raw response bodies.
+
+Current implementation (4.3):
+
+- typed WordPress health results are normalized through one stable failure-code policy shared by
+  the manual API response and alert formatter;
+- any failed administrative collection or detected health condition is routed through the existing
+  Discord/dry-run publisher without introducing a second webhook credential;
+- critical Site Health or fatal-error evidence receives critical alert severity; update, cron,
+  REST API, and collection conditions use warning severity;
+- alert payloads contain only page/check IDs, bounded aggregate counts, versions, health state, and
+  stable failure codes. Endpoint URLs, secret references, credentials, raw bodies, raw fatal codes,
+  and plugin inventories are excluded.
+
+Deferred for later sub-milestones:
+
+- external secret-manager adapters and rotation;
+- host-side WP-CLI collector and Application Password strategy;
 
 Credentials remain site-specific. Compromise of one monitoring identity must not expose the fleet.
 
