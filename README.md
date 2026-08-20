@@ -252,12 +252,86 @@ A production deployment should place the service behind an approved TLS reverse 
 | `TRIAGE_BROWSER_ARTIFACT_DIRECTORY` | No | empty | Directory for optional browser screenshot artifacts |
 | `TRIAGE_VISUAL_BASELINE_DIRECTORY` | No | empty | Directory containing separately stored human-approved visual baselines |
 | `TRIAGE_MANUAL_CHECK_CONCURRENCY` | No | `1` | Maximum simultaneous manual browser checks per service process, from 1 to 4; excess requests receive HTTP 429 |
+| `TRIAGE_STATE_DATABASE_PATH` | No | empty | SQLite file for durable incident/publication state; unset keeps state in memory only (lost on restart, unsafe for multiple workers) |
+| `TRIAGE_SCHEDULER_GLOBAL_CONCURRENCY` | No | `2` | Maximum simultaneous scheduled (fast/deep) checks across all sites, from 1 to 8 |
+| `TRIAGE_SCHEDULER_SITE_CONCURRENCY` | No | `1` | Maximum simultaneous scheduled checks per site, from 1 to 4 |
 | `LOG_LEVEL` | No | `INFO` | Runtime log level |
 
 For Compose deployments, copy `config/sites.example.yaml` to `config/sites.yaml` and replace the
 example host, page IDs, assertions, and viewports before starting the service. Compose mounts that
 file read-only and stores transient screenshot artifacts under the container's bounded `/tmp`
 filesystem.
+
+### Check scheduling
+
+Set `fast_check_interval_seconds` (60–300) and/or `deep_check_interval_seconds` (900–3600) on a
+page in the site manifest to put it on a background schedule, in addition to the on-demand
+`/checks/pages/{page_id}` endpoint:
+
+- **Fast checks** re-probe the page's origin on the given interval and feed the result through the
+  same triage/dedup/Discord pipeline as a real Uptime Kuma webhook. This requires `kuma_monitor_id`
+  (the Kuma monitor ID for this page) so the resulting incident dedupes correctly against Kuma's own
+  webhook traffic for the same monitor.
+- **Deep checks** re-run the full Playwright + WordPress health check on the given interval and
+  publish a Discord alert if it fails; they do not require `kuma_monitor_id`.
+- Whenever a fast check (or a real Kuma webhook) confirms an outage for a page that also has
+  `kuma_monitor_id` set, a deep check for that page runs immediately, outside its normal interval.
+
+Scheduled checks share the same global/per-site concurrency budgets as manual checks
+(`TRIAGE_SCHEDULER_GLOBAL_CONCURRENCY` / `TRIAGE_SCHEDULER_SITE_CONCURRENCY`), and each run is
+jittered to avoid every page waking up in lockstep.
+
+A page can also declare `maintenance_windows`: recurring weekly UTC windows (day of week, start
+time, end time) during which scheduled fast/deep checks still run and record evidence as normal,
+but any resulting incident is suppressed rather than published to Discord. This is meant for known
+deploy/backup windows so they stop generating alert noise. Manual `/checks/pages/{page_id}` calls
+and real Uptime Kuma webhooks are never suppressed, only scheduled checks are — an outage that
+persists past the window's end will alert on the next check that runs outside it, and deep checks
+have no dedup registry, so it keeps alerting on every deep-check interval for as long as it stays
+unhealthy.
+
+### Browser check classification
+
+Both `/checks/pages/{page_id}` and scheduled deep checks return a single `classification` field
+that reduces every collected failure code to one overall verdict, most severe first:
+
+| Classification | Meaning |
+| --- | --- |
+| `render_failure` | The page timed out, returned no document, or the evidence itself was invalid |
+| `wordpress_error_page` | A PHP/WordPress fatal error, forbidden error text, or WordPress health check failed |
+| `critical_resource_failure` | A resource marked critical in the manifest failed to load |
+| `javascript_failure` | A browser console error or uncaught page exception was recorded |
+| `functional_regression` | Required text/selectors were missing, or a plugin assertion/interaction failed |
+| `visual_regression` | The screenshot exceeded the approved visual diff threshold, or the comparison failed |
+| `baseline_pending` | No approved visual baseline exists yet; not treated as a failure |
+| `healthy` | No failures and no pending baseline |
+
+When several failure kinds occur in the same check, the table order above is the priority: e.g. a
+render failure is reported over a simultaneous JavaScript error. `baseline_pending` never overrides
+an actual failure and never triggers a scheduled deep-check Discord alert.
+
+Each classification also carries a static `confidence` (`high`/`medium`/`low`) and `next_action`
+(the cheapest next diagnostic step), returned alongside `classification` in the check response.
+
+### Extended check reports
+
+`/checks/pages/{page_id}` and scheduled deep checks also return:
+
+- `site_id` and `kuma_monitor_id` — so a report can be correlated back to the Kuma monitor that
+  triggered it;
+- `viewports` — one entry per checked viewport with its own `device_profile`, `classification`,
+  `failure_codes`, `console_error_count`, `resource_failure_count`, `screenshot` artifact path, and
+  `visual_status`. Raw console text, resource URLs, and selector strings are never included — only
+  stable codes and counts, consistent with the existing redaction policy;
+- `wordpress_health` already reports approved core/plugin/site-health evidence per check.
+
+No diff-image artifact is written to disk today, so no diff path is reported; the current
+screenshot path plus `visual_status` (`matched`/`changed`/`unavailable`/`baseline_pending`) is the
+available visual evidence.
+
+Kuma incident reports (`render_discord_payload`) include a `Recovery duration` field whenever a
+`RECOVERED` event follows a tracked outage; the duration is computed by
+`DurableIncidentRegistry.reserve()` from the recorded outage start.
 
 Real `.env` files, pilot configuration, webhook tokens, credentials, and tunnel details must never be committed. The repository includes only `.env.example` placeholders.
 
@@ -277,6 +351,15 @@ The service is intended to be added alongside existing notification providers:
 9. Expand gradually after measuring noise and accuracy.
 
 The repository contains no automation that changes Kuma configuration.
+
+## Pilot rollout
+
+`docs/pilot-rollout.md` turns the steps above (plus dry-run review and
+manual baseline approval) into a concrete, repeatable runbook against this
+repository's actual settings and `scripts/approve_baseline.py`.
+`docs/pilot-inventory.md` is the per-site inventory template (critical
+pages, plugins, workflows, owner, severity, maintenance window) the runbook
+expects to exist before a page goes on a check schedule.
 
 ## Verification gates
 

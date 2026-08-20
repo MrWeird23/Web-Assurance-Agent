@@ -199,7 +199,7 @@ async def test_manual_check_reports_failed_plugin_assertion_ids_without_selector
         )
 
     payload = response.json()
-    assert payload["classification"] == "failed"
+    assert payload["classification"] == "functional_regression"
     assert payload["evidence"]["failure_codes"] == ["plugin_assertion_failed"]
     assert payload["evidence"]["failed_plugin_assertions"] == ["contact-form"]
     assert "wpcf7" not in str(payload)
@@ -269,6 +269,30 @@ async def test_manual_check_runs_only_manifest_page_and_returns_concise_evidence
         "failed_plugin_assertions": [],
     }
     assert payload["artifacts"] == ["home/desktop.png", "home/desktop.png"]
+    assert payload["site_id"] == "example"
+    assert payload["kuma_monitor_id"] is None
+    assert payload["confidence"] == "high"
+    assert payload["next_action"] == "No action required."
+    assert payload["viewports"] == [
+        {
+            "device_profile": "desktop",
+            "classification": "healthy",
+            "failure_codes": [],
+            "console_error_count": 0,
+            "resource_failure_count": 0,
+            "screenshot": "home/desktop.png",
+            "visual_status": None,
+        },
+        {
+            "device_profile": "mobile",
+            "classification": "healthy",
+            "failure_codes": [],
+            "console_error_count": 0,
+            "resource_failure_count": 0,
+            "screenshot": "home/desktop.png",
+            "visual_status": None,
+        },
+    ]
     assert checker.calls == [
         ("home", "desktop", frozenset({"example.com"})),
         ("home", "mobile", frozenset({"example.com"})),
@@ -338,7 +362,7 @@ async def test_manual_check_returns_concise_wordpress_health_evidence() -> None:
 
     payload = response.json()
     assert response.status_code == 200
-    assert payload["classification"] == "failed"
+    assert payload["classification"] == "wordpress_error_page"
     assert payload["evidence"]["failure_codes"] == [
         "wordpress_core_update_available",
         "wordpress_cron_overdue",
@@ -423,4 +447,4 @@ async def test_wordpress_alert_delivery_failure_does_not_fail_manual_check() -> 
         )
 
     assert response.status_code == 200
-    assert response.json()["classification"] == "failed"
+    assert response.json()["classification"] == "wordpress_error_page"

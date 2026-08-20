@@ -9,7 +9,13 @@ from typing import Any, Protocol
 from fastapi import FastAPI, HTTPException, Request
 
 from triage_agent import __version__
-from triage_agent.browser_checks import BrowserEvidence, evaluate_browser_evidence
+from triage_agent.browser_checks import (
+    BrowserEvidence,
+    classification_confidence,
+    classification_next_action,
+    classify_check,
+    evaluate_browser_evidence,
+)
 from triage_agent.discord import DiscordPublishError
 from triage_agent.manifests import ManifestRegistry, PageManifest, ViewportManifest
 from triage_agent.wordpress_health import WordPressHealthResult
@@ -119,91 +125,129 @@ def create_app(
                     headers={"Retry-After": "1"},
                 ) from error
 
-            wordpress_health = []
             try:
-                evidence = [
-                    await page_checker.run(
-                        page=page,
-                        viewport=viewport,
-                        allowed_hosts=allowed_hosts,
-                    )
-                    for viewport in page.viewports
-                ]
-                if wordpress_health_checker is not None:
-                    for health_check in page.wordpress_health:
-                        health = await wordpress_health_checker.run(
-                            endpoint=health_check.endpoint,
-                            site_id=site_id,
-                            token_secret_ref=health_check.token_secret_ref,
-                            allowed_hosts=allowed_hosts,
-                        )
-                        wordpress_health.append(
-                            _wordpress_health_summary(health_check.id, health)
-                        )
-                        if (
-                            wordpress_alert_publisher is not None
-                            and wordpress_health_failure_codes(health)
-                        ):
-                            try:
-                                await wordpress_alert_publisher(
-                                    render_wordpress_health_discord_payload(
-                                        page_id=page.id,
-                                        check_id=health_check.id,
-                                        result=health,
-                                    )
-                                )
-                            except Exception:
-                                logger.exception(
-                                    "wordpress_health_alert_delivery_failed page_id=%s check_id=%s",
-                                    page.id,
-                                    health_check.id,
-                                )
+                return await run_page_check(
+                    page=page,
+                    allowed_hosts=allowed_hosts,
+                    site_id=site_id,
+                    page_checker=page_checker,
+                    wordpress_health_checker=wordpress_health_checker,
+                    wordpress_alert_publisher=wordpress_alert_publisher,
+                )
             finally:
                 manual_check_slots.put_nowait(None)
-            evaluations = [evaluate_browser_evidence(item) for item in evidence]
-            failed_viewports = [
-                item.device_profile
-                for item, evaluation in zip(evidence, evaluations, strict=True)
-                if not evaluation.healthy
-            ]
-            failure_codes = sorted(
-                {finding.code for evaluation in evaluations for finding in evaluation.failures}
-            )
-            failure_codes = sorted(
-                {
-                    *failure_codes,
-                    *(
-                        code
-                        for summary in wordpress_health
-                        for code in summary["failure_codes"]
-                    ),
-                }
-            )
-            failed_plugin_assertions = sorted(
-                {
-                    result.assertion_id
-                    for item in evidence
-                    for result in item.plugin_assertion_results
-                    if not result.satisfied
-                }
-            )
-            return {
-                "check_id": secrets.token_hex(16),
-                "page_id": page.id,
-                "classification": "failed" if failure_codes else "healthy",
-                "evidence": {
-                    "viewports_checked": len(evidence),
-                    "failed_viewports": failed_viewports,
-                    "failure_codes": failure_codes,
-                    "failed_plugin_assertions": failed_plugin_assertions,
-                },
-                "artifacts": [
-                    item.screenshot.path for item in evidence if item.screenshot is not None
-                ],
-                "wordpress_health": wordpress_health,
-            }
 
     return app
+
+
+async def run_page_check(
+    *,
+    page: PageManifest,
+    allowed_hosts: set[str],
+    site_id: str,
+    page_checker: "PageChecker",
+    wordpress_health_checker: "WordPressHealthChecker | None",
+    wordpress_alert_publisher: AlertPublisher | None,
+) -> dict[str, Any]:
+    """Run every viewport + WordPress health check for one page; shared by the
+    manual /checks/pages endpoint and the background scheduler's deep checks."""
+    wordpress_health = []
+    evidence = [
+        await page_checker.run(page=page, viewport=viewport, allowed_hosts=allowed_hosts)
+        for viewport in page.viewports
+    ]
+    if wordpress_health_checker is not None:
+        for health_check in page.wordpress_health:
+            health = await wordpress_health_checker.run(
+                endpoint=health_check.endpoint,
+                site_id=site_id,
+                token_secret_ref=health_check.token_secret_ref,
+                allowed_hosts=allowed_hosts,
+            )
+            wordpress_health.append(_wordpress_health_summary(health_check.id, health))
+            if wordpress_health_failure_codes(health):
+                if wordpress_alert_publisher is None:
+                    logger.info(
+                        "wordpress_health_alert_suppressed page_id=%s check_id=%s",
+                        page.id,
+                        health_check.id,
+                    )
+                else:
+                    try:
+                        await wordpress_alert_publisher(
+                            render_wordpress_health_discord_payload(
+                                page_id=page.id,
+                                check_id=health_check.id,
+                                result=health,
+                            )
+                        )
+                    except Exception:
+                        logger.exception(
+                            "wordpress_health_alert_delivery_failed page_id=%s check_id=%s",
+                            page.id,
+                            health_check.id,
+                        )
+    evaluations = [evaluate_browser_evidence(item) for item in evidence]
+    failed_viewports = [
+        item.device_profile
+        for item, evaluation in zip(evidence, evaluations, strict=True)
+        if not evaluation.healthy
+    ]
+    failure_codes = sorted(
+        {
+            *(finding.code for evaluation in evaluations for finding in evaluation.failures),
+            *(code for summary in wordpress_health for code in summary["failure_codes"]),
+        }
+    )
+    failed_plugin_assertions = sorted(
+        {
+            result.assertion_id
+            for item in evidence
+            for result in item.plugin_assertion_results
+            if not result.satisfied
+        }
+    )
+    baseline_pending = any(
+        finding.code == "baseline_pending"
+        for evaluation in evaluations
+        for finding in evaluation.information
+    )
+    classification = classify_check(failure_codes, baseline_pending=baseline_pending)
+    viewports = [
+        {
+            "device_profile": item.device_profile,
+            "classification": classify_check(
+                [finding.code for finding in evaluation.failures],
+                baseline_pending=any(
+                    finding.code == "baseline_pending" for finding in evaluation.information
+                ),
+            ),
+            "failure_codes": sorted(finding.code for finding in evaluation.failures),
+            "console_error_count": len(item.console_errors) + len(item.page_exceptions),
+            "resource_failure_count": len(item.resource_failures),
+            "screenshot": item.screenshot.path if item.screenshot is not None else None,
+            "visual_status": item.visual_assurance.status if item.visual_assurance else None,
+        }
+        for item, evaluation in zip(evidence, evaluations, strict=True)
+    ]
+    return {
+        "check_id": secrets.token_hex(16),
+        "page_id": page.id,
+        "site_id": site_id,
+        "kuma_monitor_id": page.kuma_monitor_id,
+        "classification": classification,
+        "confidence": classification_confidence(classification),
+        "next_action": classification_next_action(classification),
+        "evidence": {
+            "viewports_checked": len(evidence),
+            "failed_viewports": failed_viewports,
+            "failure_codes": failure_codes,
+            "failed_plugin_assertions": failed_plugin_assertions,
+        },
+        "viewports": viewports,
+        "artifacts": [item.screenshot.path for item in evidence if item.screenshot is not None],
+        "wordpress_health": wordpress_health,
+    }
 
 
 def _wordpress_health_summary(

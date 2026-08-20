@@ -200,3 +200,47 @@ def test_report_does_not_disclose_free_text_kuma_or_probe_errors() -> None:
     assert "BEARER_SENTINEL" not in serialized
     assert "COOKIE_SENTINEL" not in serialized
     assert "PROBE_ERROR_SENTINEL" not in serialized
+
+
+def test_report_includes_recovery_duration_when_known() -> None:
+    event = KumaEvent(
+        monitor_id=11,
+        monitor_name="Client Shop",
+        url="https://example.com/",
+        state=EventState.UP,
+        error="",
+        observed_at="2026-08-04T13:20:00+00:00",
+    )
+    incident = Incident(
+        kind=IncidentKind.RECOVERED,
+        confirmed=True,
+        summary="Recovered",
+        recommendation="No action",
+    )
+
+    payload = render_discord_payload(event, incident, [], recovery_duration_seconds=3725)
+
+    fields = {field["name"]: field["value"] for field in payload["embeds"][0]["fields"]}
+    assert fields["Recovery duration"] == "1h 2m 5s"
+
+
+def test_report_omits_recovery_duration_field_when_unknown() -> None:
+    event = KumaEvent(
+        monitor_id=11,
+        monitor_name="Client Shop",
+        url="https://example.com/",
+        state=EventState.DOWN,
+        error="HTTP 503",
+        observed_at="2026-08-04T13:20:00+00:00",
+    )
+    incident = Incident(
+        kind=IncidentKind.CONFIRMED_OUTAGE,
+        confirmed=True,
+        summary="Confirmed",
+        recommendation="Inspect the origin",
+    )
+
+    payload = render_discord_payload(event, incident, [])
+
+    names = [field["name"] for field in payload["embeds"][0]["fields"]]
+    assert "Recovery duration" not in names

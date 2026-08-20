@@ -16,6 +16,7 @@ def test_settings_parse_safe_runtime_environment() -> None:
             "TRIAGE_BROWSER_ARTIFACT_DIRECTORY": "/tmp/browser-artifacts",
             "TRIAGE_VISUAL_BASELINE_DIRECTORY": "/var/lib/triage/baselines",
             "TRIAGE_MANUAL_CHECK_CONCURRENCY": "2",
+            "TRIAGE_STATE_DATABASE_PATH": "/var/lib/triage/state/state.sqlite3",
         }
     )
 
@@ -28,6 +29,7 @@ def test_settings_parse_safe_runtime_environment() -> None:
     assert settings.browser_artifact_directory == Path("/tmp/browser-artifacts")
     assert settings.visual_baseline_directory == Path("/var/lib/triage/baselines")
     assert settings.manual_check_concurrency == 2
+    assert settings.state_database_path == Path("/var/lib/triage/state/state.sqlite3")
 
 
 def test_settings_leave_browser_checks_disabled_without_manifest_path() -> None:
@@ -42,6 +44,7 @@ def test_settings_leave_browser_checks_disabled_without_manifest_path() -> None:
     assert settings.browser_artifact_directory is None
     assert settings.visual_baseline_directory is None
     assert settings.manual_check_concurrency == 1
+    assert settings.state_database_path is None
 
 
 def test_settings_reject_invalid_manual_check_concurrency() -> None:

@@ -1,3 +1,4 @@
+from collections.abc import Iterable
 from dataclasses import dataclass
 from math import isfinite
 
@@ -466,3 +467,90 @@ def evaluate_browser_evidence(evidence: BrowserEvidence) -> BrowserEvaluation:
         failures=tuple(failures),
         information=tuple(information),
     )
+
+
+_RENDER_FAILURE_CODES = frozenset(
+    {"invalid_browser_evidence", "browser_timeout", "document_failure"}
+)
+_JAVASCRIPT_FAILURE_CODES = frozenset({"console_error", "page_exception"})
+_FUNCTIONAL_REGRESSION_CODES = frozenset(
+    {
+        "required_text_missing",
+        "required_selector_missing",
+        "required_selector_not_visible",
+        "required_selector_zero_geometry",
+        "plugin_assertion_failed",
+        "interaction_failed",
+    }
+)
+_VISUAL_REGRESSION_CODES = frozenset({"visual_regression", "visual_evaluation_failed"})
+_WORDPRESS_ERROR_PAGE_CODES = frozenset({"application_failure", "forbidden_text_match"})
+# Priority order: the first matching classification wins when a check has several
+# simultaneous failure kinds, most severe/actionable first.
+_CLASSIFICATION_PRIORITY = (
+    "render_failure",
+    "wordpress_error_page",
+    "critical_resource_failure",
+    "javascript_failure",
+    "functional_regression",
+    "visual_regression",
+    "baseline_pending",
+)
+
+
+def classify_check(failure_codes: Iterable[str], *, baseline_pending: bool = False) -> str:
+    """Reduce a check's failure codes to one overall classification for reporting."""
+    codes = set(failure_codes)
+    present = set()
+    if codes & _RENDER_FAILURE_CODES:
+        present.add("render_failure")
+    if codes & _WORDPRESS_ERROR_PAGE_CODES or any(
+        code.startswith("wordpress_") for code in codes
+    ):
+        present.add("wordpress_error_page")
+    if "critical_resource_failure" in codes:
+        present.add("critical_resource_failure")
+    if codes & _JAVASCRIPT_FAILURE_CODES:
+        present.add("javascript_failure")
+    if codes & _FUNCTIONAL_REGRESSION_CODES:
+        present.add("functional_regression")
+    if codes & _VISUAL_REGRESSION_CODES:
+        present.add("visual_regression")
+    if baseline_pending:
+        present.add("baseline_pending")
+    for classification in _CLASSIFICATION_PRIORITY:
+        if classification in present:
+            return classification
+    return "healthy"
+
+
+_CLASSIFICATION_CONFIDENCE = {
+    "render_failure": "high",
+    "wordpress_error_page": "high",
+    "critical_resource_failure": "high",
+    "javascript_failure": "medium",
+    "functional_regression": "medium",
+    "visual_regression": "low",
+    "baseline_pending": "low",
+    "healthy": "high",
+}
+_CLASSIFICATION_NEXT_ACTION = {
+    "render_failure": "Check origin/server logs for the failing request.",
+    "wordpress_error_page": "Inspect the WordPress error log and recently changed plugins.",
+    "critical_resource_failure": "Check the failing resource's origin and CDN status.",
+    "javascript_failure": "Reproduce with browser devtools open to capture the stack trace.",
+    "functional_regression": "Re-run the affected interaction after the next deploy.",
+    "visual_regression": "Review the visual diff and approve or reject the new baseline.",
+    "baseline_pending": "Approve an initial visual baseline for this page/viewport.",
+    "healthy": "No action required.",
+}
+
+
+def classification_confidence(classification: str) -> str:
+    """Static confidence level for a classification returned by classify_check()."""
+    return _CLASSIFICATION_CONFIDENCE[classification]
+
+
+def classification_next_action(classification: str) -> str:
+    """Cheapest next diagnostic step for a classification returned by classify_check()."""
+    return _CLASSIFICATION_NEXT_ACTION[classification]

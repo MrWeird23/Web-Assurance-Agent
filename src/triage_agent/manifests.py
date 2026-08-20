@@ -1,5 +1,6 @@
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from types import MappingProxyType
 from typing import Annotated, Any, Literal, cast
@@ -133,6 +134,15 @@ class WordPressHealthManifest(StrictManifestModel):
     token_secret_ref: NonEmptyText
 
 
+_TIME_PATTERN = r"^([01]\d|2[0-3]):[0-5]\d$"
+
+
+class MaintenanceWindow(StrictManifestModel):
+    day_of_week: Literal["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+    start_time: str = Field(pattern=_TIME_PATTERN)
+    end_time: str = Field(pattern=_TIME_PATTERN)
+
+
 class PageManifest(StrictManifestModel):
     id: Identifier
     url: NonEmptyText
@@ -148,6 +158,10 @@ class PageManifest(StrictManifestModel):
     plugin_assertions: tuple[PluginAssertionManifest, ...] = Field(default=(), max_length=20)
     interactions: tuple[InteractionManifest, ...] = Field(default=(), max_length=20)
     wordpress_health: tuple[WordPressHealthManifest, ...] = Field(default=(), max_length=5)
+    fast_check_interval_seconds: StrictInt | None = Field(default=None, ge=60, le=300)
+    deep_check_interval_seconds: StrictInt | None = Field(default=None, ge=900, le=3600)
+    kuma_monitor_id: StrictInt | None = Field(default=None, ge=1)
+    maintenance_windows: tuple[MaintenanceWindow, ...] = Field(default=(), max_length=10)
 
 
 class SiteManifest(StrictManifestModel):
@@ -167,11 +181,15 @@ class ManifestRegistry:
     _pages: Mapping[str, PageManifest]
     _allowed_hosts: Mapping[str, frozenset[str]]
     _site_ids: Mapping[str, str]
+    _monitor_page_ids: Mapping[int, str]
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "_pages", MappingProxyType(dict(self._pages)))
         object.__setattr__(self, "_allowed_hosts", MappingProxyType(dict(self._allowed_hosts)))
         object.__setattr__(self, "_site_ids", MappingProxyType(dict(self._site_ids)))
+        object.__setattr__(
+            self, "_monitor_page_ids", MappingProxyType(dict(self._monitor_page_ids))
+        )
 
     def page(self, page_id: str) -> PageManifest:
         return self._pages[page_id]
@@ -184,6 +202,25 @@ class ManifestRegistry:
 
     def pages(self) -> tuple[PageManifest, ...]:
         return tuple(self._pages.values())
+
+    def page_by_monitor_id(self, monitor_id: int) -> PageManifest | None:
+        page_id = self._monitor_page_ids.get(monitor_id)
+        return self._pages[page_id] if page_id is not None else None
+
+
+_WEEKDAY_NAMES = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+def is_within_maintenance_window(
+    windows: Sequence[MaintenanceWindow], now: datetime
+) -> bool:
+    """UTC, same-day windows only — a window cannot cross midnight."""
+    current_day = _WEEKDAY_NAMES[now.weekday()]
+    current_time = now.strftime("%H:%M")
+    return any(
+        window.day_of_week == current_day and window.start_time <= current_time < window.end_time
+        for window in windows
+    )
 
 
 def load_site_manifest(path: Path) -> ManifestRegistry:
@@ -260,18 +297,39 @@ def parse_site_manifest(text: str) -> ManifestRegistry:
                     "Invalid site manifest: click interaction must not declare a value"
                 )
 
+    for page in page_list:
+        for window in page.maintenance_windows:
+            if window.start_time >= window.end_time:
+                raise ValueError(
+                    "Invalid site manifest: maintenance window start_time must be before end_time"
+                )
+
     page_ids = [page.id for page in page_list]
     if len(page_ids) != len(set(page_ids)):
         raise ValueError("Invalid site manifest: duplicate page ID")
+
+    monitor_ids = [page.kuma_monitor_id for page in page_list if page.kuma_monitor_id is not None]
+    if len(monitor_ids) != len(set(monitor_ids)):
+        raise ValueError("Invalid site manifest: duplicate kuma_monitor_id")
+
+    for page in page_list:
+        if page.fast_check_interval_seconds is not None and page.kuma_monitor_id is None:
+            raise ValueError(
+                "Invalid site manifest: fast_check_interval_seconds requires kuma_monitor_id"
+            )
 
     pages = {page.id: page for page in page_list}
     page_allowed_hosts = {
         page.id: frozenset(site.allowed_hosts) for site in manifest.sites for page in site.pages
     }
     page_site_ids = {page.id: site.id for site in manifest.sites for page in site.pages}
+    monitor_page_ids = {
+        page.kuma_monitor_id: page.id for page in page_list if page.kuma_monitor_id is not None
+    }
     return ManifestRegistry(
         manifest=manifest,
         _pages=pages,
         _allowed_hosts=page_allowed_hosts,
         _site_ids=page_site_ids,
+        _monitor_page_ids=monitor_page_ids,
     )

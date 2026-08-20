@@ -15,6 +15,7 @@ services:
       TRIAGE_BROWSER_ARTIFACT_DIRECTORY: "/tmp/browser-artifacts"
       TRIAGE_VISUAL_BASELINE_DIRECTORY: "/var/lib/triage/baselines"
       TRIAGE_MANUAL_CHECK_CONCURRENCY: "${TRIAGE_MANUAL_CHECK_CONCURRENCY:-1}"
+      TRIAGE_STATE_DATABASE_PATH: "/var/lib/triage/state/state.sqlite3"
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
     volumes:
       - type: bind
@@ -27,6 +28,11 @@ services:
         source: ./data/baselines
         target: /var/lib/triage/baselines
         read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./data/state
+        target: /var/lib/triage/state
         bind:
           create_host_path: false
     read_only: true

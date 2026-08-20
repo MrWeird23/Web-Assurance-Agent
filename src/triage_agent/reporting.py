@@ -62,12 +62,40 @@ def _safe_display_url(url: str) -> str:
     return f"https://{display_host}/"
 
 
+def _format_duration(seconds: int) -> str:
+    minutes, secs = divmod(max(seconds, 0), 60)
+    hours, minutes = divmod(minutes, 60)
+    parts = [f"{hours}h"] if hours else []
+    if hours or minutes:
+        parts.append(f"{minutes}m")
+    parts.append(f"{secs}s")
+    return " ".join(parts)
+
+
 def render_discord_payload(
     event: KumaEvent,
     incident: Incident,
     probes: list[ProbeResult],
+    *,
+    recovery_duration_seconds: int | None = None,
 ) -> dict[str, Any]:
     confirmation = "\n".join(_format_probe(probe) for probe in probes) or "Not required"
+    fields = [
+        {
+            "name": "Kuma evidence",
+            "value": (
+                "Kuma reported a recovery."
+                if event.state is EventState.UP
+                else "Kuma reported a failure."
+            ),
+        },
+        {"name": "Independent confirmation", "value": confirmation},
+    ]
+    if recovery_duration_seconds is not None:
+        fields.append(
+            {"name": "Recovery duration", "value": _format_duration(recovery_duration_seconds)}
+        )
+    fields.append({"name": "Recommendation", "value": _RECOMMENDATIONS[incident.kind]})
     return {
         "username": "Web Assurance Agent",
         "embeds": [
@@ -76,22 +104,39 @@ def render_discord_payload(
                 "url": _safe_display_url(event.url),
                 "color": _COLORS[incident.kind],
                 "description": _DESCRIPTIONS[incident.kind],
-                "fields": [
-                    {
-                        "name": "Kuma evidence",
-                        "value": (
-                            "Kuma reported a recovery."
-                            if event.state is EventState.UP
-                            else "Kuma reported a failure."
-                        ),
-                    },
-                    {"name": "Independent confirmation", "value": confirmation},
-                    {
-                        "name": "Recommendation",
-                        "value": _RECOMMENDATIONS[incident.kind],
-                    },
-                ],
+                "fields": fields,
                 "footer": {"text": f"Kuma monitor {event.monitor_id} · {event.observed_at}"},
+            }
+        ],
+    }
+
+
+def render_browser_check_discord_payload(
+    *,
+    page_id: str,
+    failed_viewports: list[str],
+    failure_codes: list[str],
+    failed_plugin_assertions: list[str],
+) -> dict[str, Any]:
+    fields = [
+        {"name": "Failed viewports", "value": ", ".join(failed_viewports) or "None"},
+        {"name": "Failure codes", "value": ", ".join(failure_codes) or "None"},
+    ]
+    if failed_plugin_assertions:
+        fields.append(
+            {
+                "name": "Failed plugin assertions",
+                "value": ", ".join(failed_plugin_assertions),
+            }
+        )
+    return {
+        "username": "Web Assurance Agent",
+        "embeds": [
+            {
+                "title": "Deep check failed",
+                "description": f"Page `{page_id}` failed automated verification.",
+                "color": 0xD83C3E,
+                "fields": fields,
             }
         ],
     }

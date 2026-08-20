@@ -1,12 +1,26 @@
 import asyncio
+from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 from triage_agent.classification import IncidentKind
+from triage_agent.durable_registry import DurableIncidentRegistry
 from triage_agent.engine import TriageEngine
+from triage_agent.events import EventState, KumaEvent
 from triage_agent.probes import ProbeResult
-from triage_agent.registry import IncidentRegistry
+
+
+def _kuma_event(*, monitor_id: int, url: str, down: bool) -> KumaEvent:
+    return KumaEvent(
+        monitor_id=monitor_id,
+        monitor_name="Example",
+        url=url,
+        state=EventState.DOWN if down else EventState.UP,
+        error="HTTP 503" if down else "",
+        observed_at="2026-08-04T13:20:00+00:00",
+    )
 
 
 async def test_engine_confirms_down_event_and_publishes_report() -> None:
@@ -63,7 +77,6 @@ async def test_engine_deduplicates_repeated_incident_reports() -> None:
         probe=probe,
         publish=publish,
         confirmation_attempts=1,
-        registry=IncidentRegistry(),
     )
     payload = {
         "heartbeat": {"status": 0, "time": "2026-08-04 13:20:00", "msg": "HTTP 503"},
@@ -111,8 +124,11 @@ async def test_engine_waits_between_confirmation_attempts() -> None:
     assert waits == [5, 5]
 
 
-async def test_engine_retries_same_incident_after_publication_failure() -> None:
+async def test_engine_retries_same_incident_after_publication_failure_once_lease_expires(
+    tmp_path: Path,
+) -> None:
     attempts = 0
+    now = datetime(2026, 8, 4, 13, 20)
 
     async def probe(url: str) -> ProbeResult:
         return ProbeResult(False, 503, 100, url, "HTTP 503", "cloudflare")
@@ -123,7 +139,12 @@ async def test_engine_retries_same_incident_after_publication_failure() -> None:
         if attempts == 1:
             raise RuntimeError("delivery failed")
 
-    engine = TriageEngine(probe=probe, publish=publish, confirmation_attempts=1)
+    registry = DurableIncidentRegistry(
+        tmp_path / "state.sqlite3", now=lambda: now, lease_seconds=30
+    )
+    engine = TriageEngine(
+        probe=probe, publish=publish, confirmation_attempts=1, registry=registry
+    )
     payload = {
         "heartbeat": {"status": 0, "time": "2026-08-04 13:20:00", "msg": "HTTP 503"},
         "monitor": {"id": 12, "name": "Example", "url": "https://example.com/"},
@@ -132,8 +153,12 @@ async def test_engine_retries_same_incident_after_publication_failure() -> None:
     with pytest.raises(RuntimeError, match="delivery failed"):
         await engine.handle(payload)
     await engine.handle(payload)
+    assert attempts == 1  # blocked: failed reservation's lease has not expired yet
 
+    now += timedelta(seconds=31)
+    await engine.handle(payload)
     assert attempts == 2
+    registry.close()
 
 
 async def test_engine_does_not_publish_stale_transition_after_newer_recovery() -> None:
@@ -161,6 +186,87 @@ async def test_engine_does_not_publish_stale_transition_after_newer_recovery() -
     assert published_titles == ["Recovered"]
 
 
+async def test_engine_calls_on_publish_hook_only_when_incident_is_published() -> None:
+    hook_calls: list[IncidentKind] = []
+
+    async def probe(url: str) -> ProbeResult:
+        return ProbeResult(False, 503, 100, url, "HTTP 503", "cloudflare")
+
+    async def publish(_payload: dict[str, Any]) -> None:
+        return None
+
+    async def on_publish(event: Any, incident: Any) -> None:
+        hook_calls.append(incident.kind)
+
+    engine = TriageEngine(
+        probe=probe, publish=publish, confirmation_attempts=1, on_publish=on_publish
+    )
+    payload = {
+        "heartbeat": {"status": 0, "time": "2026-08-04 13:20:00", "msg": "HTTP 503"},
+        "monitor": {"id": 12, "name": "Example", "url": "https://example.com/"},
+    }
+
+    await engine.handle(payload)
+    await engine.handle(payload)  # duplicate: must not fire the hook again
+
+    assert hook_calls == [IncidentKind.CONFIRMED_OUTAGE]
+
+
+async def test_engine_swallows_on_publish_hook_errors() -> None:
+    async def probe(url: str) -> ProbeResult:
+        return ProbeResult(False, 503, 100, url, "HTTP 503", "cloudflare")
+
+    async def publish(_payload: dict[str, Any]) -> None:
+        return None
+
+    async def failing_hook(event: Any, incident: Any) -> None:
+        raise RuntimeError("hook exploded")
+
+    engine = TriageEngine(
+        probe=probe, publish=publish, confirmation_attempts=1, on_publish=failing_hook
+    )
+    payload = {
+        "heartbeat": {"status": 0, "time": "2026-08-04 13:20:00", "msg": "HTTP 503"},
+        "monitor": {"id": 12, "name": "Example", "url": "https://example.com/"},
+    }
+
+    outcome = await engine.handle(payload)  # must not raise despite hook failure
+
+    assert outcome.incident.kind is IncidentKind.CONFIRMED_OUTAGE
+
+
+async def test_engine_reports_recovery_duration_from_outage_start_to_recovery(
+    tmp_path: Path,
+) -> None:
+    published: list[dict[str, Any]] = []
+
+    async def probe(url: str) -> ProbeResult:
+        return ProbeResult(False, 503, 100, url, "HTTP 503", "cloudflare")
+
+    async def publish(payload: dict[str, Any]) -> None:
+        published.append(payload)
+
+    registry = DurableIncidentRegistry(tmp_path / "state.sqlite3")
+    engine = TriageEngine(
+        probe=probe, publish=publish, confirmation_attempts=1, registry=registry
+    )
+    outage = {
+        "heartbeat": {"status": 0, "time": "2026-08-04 13:20:00", "msg": "HTTP 503"},
+        "monitor": {"id": 12, "name": "Example", "url": "https://example.com/"},
+    }
+    recovery = {
+        "heartbeat": {"status": 1, "time": "2026-08-04 13:25:30", "msg": "200 OK"},
+        "monitor": {"id": 12, "name": "Example", "url": "https://example.com/"},
+    }
+
+    await engine.handle(outage)
+    await engine.handle(recovery)
+    registry.close()
+
+    fields = {field["name"]: field["value"] for field in published[1]["embeds"][0]["fields"]}
+    assert fields["Recovery duration"] == "5m 30s"
+
+
 async def test_engine_serializes_concurrent_events_for_same_monitor() -> None:
     published: list[dict[str, Any]] = []
 
@@ -181,3 +287,63 @@ async def test_engine_serializes_concurrent_events_for_same_monitor() -> None:
     await asyncio.gather(engine.handle(payload), engine.handle(payload))
 
     assert len(published) == 1
+
+
+async def test_engine_suppresses_publish_when_requested_but_still_classifies() -> None:
+    published: list[dict[str, Any]] = []
+
+    async def probe(url: str) -> ProbeResult:
+        return ProbeResult(False, 503, 100, url, "HTTP 503", "cloudflare")
+
+    async def publish(payload: dict[str, Any]) -> None:
+        published.append(payload)
+
+    engine = TriageEngine(probe=probe, publish=publish, confirmation_attempts=1)
+    outcome = await engine.handle_event(
+        _kuma_event(monitor_id=12, url="https://example.com/", down=True),
+        suppress_publish=True,
+    )
+
+    assert outcome.incident.kind is IncidentKind.CONFIRMED_OUTAGE
+    assert published == []
+
+
+async def test_engine_retries_suppressed_incident_on_next_event() -> None:
+    published: list[dict[str, Any]] = []
+
+    async def probe(url: str) -> ProbeResult:
+        return ProbeResult(False, 503, 100, url, "HTTP 503", "cloudflare")
+
+    async def publish(payload: dict[str, Any]) -> None:
+        published.append(payload)
+
+    engine = TriageEngine(probe=probe, publish=publish, confirmation_attempts=1)
+    event = _kuma_event(monitor_id=12, url="https://example.com/", down=True)
+
+    await engine.handle_event(event, suppress_publish=True)
+    await engine.handle_event(event)  # maintenance window over: same incident, no suppression
+
+    assert len(published) == 1
+
+
+async def test_engine_does_not_call_on_publish_hook_when_suppressed() -> None:
+    hook_calls: list[Any] = []
+
+    async def probe(url: str) -> ProbeResult:
+        return ProbeResult(False, 503, 100, url, "HTTP 503", "cloudflare")
+
+    async def publish(_payload: dict[str, Any]) -> None:
+        return None
+
+    async def on_publish(event: Any, incident: Any) -> None:
+        hook_calls.append(incident.kind)
+
+    engine = TriageEngine(
+        probe=probe, publish=publish, confirmation_attempts=1, on_publish=on_publish
+    )
+    await engine.handle_event(
+        _kuma_event(monitor_id=12, url="https://example.com/", down=True),
+        suppress_publish=True,
+    )
+
+    assert hook_calls == []
