@@ -8,6 +8,7 @@ from urllib.parse import urljoin
 
 import httpx
 
+from triage_agent import __version__
 from triage_agent.security import (
     UnsafeTargetError,
     validate_probe_url,
@@ -81,7 +82,7 @@ async def probe_url(
                 request_url,
                 headers={
                     "Host": host,
-                    "User-Agent": "Web-Assurance-Agent/0.1",
+                    "User-Agent": f"Web-Assurance-Agent/{__version__}",
                 },
                 extensions={"sni_hostname": host},
             )

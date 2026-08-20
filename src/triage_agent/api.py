@@ -1,3 +1,4 @@
+import asyncio
 import json
 import secrets
 from collections.abc import Callable
@@ -6,7 +7,10 @@ from typing import Any, Protocol
 
 from fastapi import FastAPI, HTTPException, Request
 
+from triage_agent import __version__
+from triage_agent.browser_checks import BrowserEvidence, evaluate_browser_evidence
 from triage_agent.discord import DiscordPublishError
+from triage_agent.manifests import ManifestRegistry, PageManifest, ViewportManifest
 
 MAX_WEBHOOK_BODY_BYTES = 65_536
 
@@ -15,15 +19,28 @@ class Engine(Protocol):
     async def handle(self, payload: dict[str, Any]) -> Any: ...
 
 
+class PageChecker(Protocol):
+    async def run(
+        self,
+        *,
+        page: PageManifest,
+        viewport: ViewportManifest,
+        allowed_hosts: set[str],
+    ) -> BrowserEvidence: ...
+
+
 def create_app(
     *,
     engine: Engine,
     webhook_token: str,
     lifespan: Callable[[FastAPI], AbstractAsyncContextManager[None]] | None = None,
+    manifest_registry: ManifestRegistry | None = None,
+    page_checker: PageChecker | None = None,
+    manual_check_concurrency: int = 1,
 ) -> FastAPI:
     app = FastAPI(
         title="Web Assurance Agent",
-        version="0.1.0",
+        version=__version__,
         lifespan=lifespan,
     )
 
@@ -57,7 +74,79 @@ def create_app(
             raise HTTPException(status_code=503, detail="Report delivery unavailable") from exc
         return {"status": "accepted"}
 
+    if manifest_registry is not None and page_checker is not None:
+        manual_check_slots = asyncio.Queue[None](maxsize=manual_check_concurrency)
+        for _ in range(manual_check_concurrency):
+            manual_check_slots.put_nowait(None)
+
+        @app.post("/checks/pages/{page_id}")
+        async def check_page(page_id: str, request: Request) -> dict[str, Any]:
+            _authenticate(request, webhook_token)
+            try:
+                page = manifest_registry.page(page_id)
+                allowed_hosts = set(manifest_registry.allowed_hosts(page_id))
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail="Unknown page") from exc
+
+            try:
+                manual_check_slots.get_nowait()
+            except asyncio.QueueEmpty as error:
+                raise HTTPException(
+                    status_code=429,
+                    detail="Manual check capacity exhausted",
+                    headers={"Retry-After": "1"},
+                ) from error
+
+            try:
+                evidence = [
+                    await page_checker.run(
+                        page=page,
+                        viewport=viewport,
+                        allowed_hosts=allowed_hosts,
+                    )
+                    for viewport in page.viewports
+                ]
+            finally:
+                manual_check_slots.put_nowait(None)
+            evaluations = [evaluate_browser_evidence(item) for item in evidence]
+            failed_viewports = [
+                item.device_profile
+                for item, evaluation in zip(evidence, evaluations, strict=True)
+                if not evaluation.healthy
+            ]
+            failure_codes = sorted(
+                {finding.code for evaluation in evaluations for finding in evaluation.failures}
+            )
+            failed_plugin_assertions = sorted(
+                {
+                    result.assertion_id
+                    for item in evidence
+                    for result in item.plugin_assertion_results
+                    if not result.satisfied
+                }
+            )
+            return {
+                "check_id": secrets.token_hex(16),
+                "page_id": page.id,
+                "classification": "healthy" if not failed_viewports else "failed",
+                "evidence": {
+                    "viewports_checked": len(evidence),
+                    "failed_viewports": failed_viewports,
+                    "failure_codes": failure_codes,
+                    "failed_plugin_assertions": failed_plugin_assertions,
+                },
+                "artifacts": [
+                    item.screenshot.path for item in evidence if item.screenshot is not None
+                ],
+            }
+
     return app
+
+
+def _authenticate(request: Request, webhook_token: str) -> None:
+    supplied_token = request.headers.get("X-Triage-Token")
+    if supplied_token is None or not secrets.compare_digest(supplied_token, webhook_token):
+        raise HTTPException(status_code=401, detail="Invalid webhook token")
 
 
 async def _read_json_object(request: Request) -> dict[str, Any]:

@@ -11,7 +11,17 @@ services:
       TRIAGE_CONFIRMATION_ATTEMPTS: "${TRIAGE_CONFIRMATION_ATTEMPTS:-2}"
       TRIAGE_CONFIRMATION_DELAY_SECONDS: "${TRIAGE_CONFIRMATION_DELAY_SECONDS:-5}"
       TRIAGE_REQUEST_TIMEOUT_SECONDS: "${TRIAGE_REQUEST_TIMEOUT_SECONDS:-15}"
+      TRIAGE_SITE_MANIFEST_PATH: "/app/config/sites.yaml"
+      TRIAGE_BROWSER_ARTIFACT_DIRECTORY: "/tmp/browser-artifacts"
+      TRIAGE_MANUAL_CHECK_CONCURRENCY: "${TRIAGE_MANUAL_CHECK_CONCURRENCY:-1}"
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+    volumes:
+      - type: bind
+        source: ./config/sites.yaml
+        target: /app/config/sites.yaml
+        read_only: true
+        bind:
+          create_host_path: false
     read_only: true
     tmpfs:
       - /tmp:size=16m,mode=1777

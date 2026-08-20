@@ -34,6 +34,12 @@ async def test_root_identifies_healthy_service() -> None:
     }
 
 
+def test_api_advertises_current_package_version() -> None:
+    app = create_app(engine=StubEngine(), webhook_token="expected-secret")
+
+    assert app.version == "0.2.0"
+
+
 async def test_webhook_rejects_missing_authentication_token() -> None:
     engine = StubEngine()
     app = create_app(engine=engine, webhook_token="expected-secret")

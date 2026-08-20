@@ -5,7 +5,12 @@ Web Assurance Agent is a read-only service that turns Uptime Kuma website events
 Uptime Kuma remains the fast deterministic outage detector. This service receives an authenticated event, confirms failures through tightly controlled HTTPS probes, classifies the result, suppresses duplicate reports, and either publishes a structured Discord embed or logs it in dry-run mode.
 
 > [!IMPORTANT]
-> The current `0.1.0` implementation provides HTTP incident confirmation and reporting. Browser-rendered checks, WordPress/plugin assertions, synthetic journeys, and visual regression are planned in [ROADMAP.md](ROADMAP.md), not yet implemented.
+> The `0.2.0` development branch provides HTTP incident confirmation and reporting,
+> strict declarative page manifests, and an isolated Playwright/Chromium runner with
+> deterministic browser evidence. An authenticated manual endpoint can invoke checks for
+> manifest-defined pages, including narrow detection of visible WordPress and PHP failure
+> signatures and opt-in plugin-specific rendered-state assertions; scheduling, synthetic
+> journeys, and visual regression remain planned in [ROADMAP.md](ROADMAP.md).
 
 ## Why this exists
 
@@ -20,6 +25,13 @@ This first release solves the first problem safely:
 - leaves existing Kuma notification providers untouched.
 
 The roadmap extends this foundation toward proving that a site rendered and behaved as expected.
+
+Built-in application failure detection currently recognizes the canonical WordPress critical-error,
+database-connection, and maintenance pages; PHP fatal, parse, and uncaught exception output with
+file/line evidence; and a narrow allowlist of visibly unrendered plugin shortcodes. It does not match
+the word `error` by itself, and reports stable codes rather than copying raw page text into results.
+Shortcode detection is opt-in per page through `application_shortcodes` in the site manifest; list
+only shortcode names that are expected to render on that specific page.
 
 ## Current capabilities
 
@@ -39,6 +51,24 @@ The roadmap extends this foundation toward proving that a site rendered and beha
     - `recovered`
 11. Serialize events per monitor, reject stale transitions, and suppress repeated classifications.
 12. Publish a structured Discord embed or log the payload in dry-run mode.
+13. Evaluate typed browser evidence deterministically without requiring a browser runtime.
+14. Load strict declarative site/page manifests with exact HTTPS allowlists, stable IDs,
+    viewport profiles, assertions, resource policies, masks, and disabled-by-default safe
+    interactions.
+15. Run isolated Playwright/Chromium checks through validated, address-pinned HTTPS fetching
+    with browser DNS disabled, single-use host/SNI-isolated transports, bounded redirects and
+    resources, read-only routing, deterministic context settings, blocked WebRTC/WebSocket escape
+    paths, fixed typed runtime-error markers, and optional masked viewport screenshot artifacts.
+    Cross-origin routed redirects fail closed rather than being fulfilled against the requesting
+    origin.
+16. Invoke a manifest-defined page manually through `POST /checks/pages/{page_id}` using the
+    existing `X-Triage-Token` authentication boundary. Arbitrary request URLs are not accepted.
+17. Assert, opt-in per page, that declared plugin components actually rendered — Elementor,
+    Contact Form 7, WooCommerce, gallery/slider, search, and multilingual components each
+    declare required CSS selectors that must exist, be visible, and have non-zero geometry.
+    A failed assertion reports the stable `plugin_assertion_failed` code and the assertion ID,
+    never the selector or page content. This is read-only rendered-state inspection; no form
+    submission, cart mutation, checkout, or content change occurs.
 
 ## Safety model
 
@@ -179,6 +209,7 @@ Without `TRIAGE_DISCORD_WEBHOOK_URL`, the rendered Discord payload appears only 
 
 ```bash
 cp .env.example .env
+cp config/sites.example.yaml config/sites.yaml
 # Replace every placeholder before continuing.
 
 docker compose config
@@ -200,7 +231,15 @@ A production deployment should place the service behind an approved TLS reverse 
 | `TRIAGE_CONFIRMATION_ATTEMPTS` | No | `2` | Confirmation attempts, from 1 to 5 |
 | `TRIAGE_CONFIRMATION_DELAY_SECONDS` | No | `5` | Delay between attempts, from 0 to 60 seconds |
 | `TRIAGE_REQUEST_TIMEOUT_SECONDS` | No | `15` | Per-request timeout, from 1 to 60 seconds |
+| `TRIAGE_SITE_MANIFEST_PATH` | No | empty | Enables manifest-backed manual browser checks when set |
+| `TRIAGE_BROWSER_ARTIFACT_DIRECTORY` | No | empty | Directory for optional browser screenshot artifacts |
+| `TRIAGE_MANUAL_CHECK_CONCURRENCY` | No | `1` | Maximum simultaneous manual browser checks per service process, from 1 to 4; excess requests receive HTTP 429 |
 | `LOG_LEVEL` | No | `INFO` | Runtime log level |
+
+For Compose deployments, copy `config/sites.example.yaml` to `config/sites.yaml` and replace the
+example host, page IDs, assertions, and viewports before starting the service. Compose mounts that
+file read-only and stores transient screenshot artifacts under the container's bounded `/tmp`
+filesystem.
 
 Real `.env` files, pilot configuration, webhook tokens, credentials, and tunnel details must never be committed. The repository includes only `.env.example` placeholders.
 
@@ -240,7 +279,11 @@ docker build -t web-assurance-agent:local .
 - Incident state is in memory and resets when the process restarts.
 - One worker is required until state becomes durable.
 - Confirmation originates from one deployment location.
-- Browser rendering, WordPress/plugin checks, synthetic interactions, screenshot comparison, and baseline management are not yet implemented.
+- The isolated browser runner is not yet wired to an API endpoint or scheduler.
+- Screenshot capture requires an explicit artifact directory; production retention policy,
+  screenshot comparison, and human-approved baseline management are not yet implemented.
+- Plugin-specific rendered-state assertions are implemented; safe synthetic interactions
+  (opening menus, expanding accordions, advancing sliders) are not yet implemented.
 - No automatic remediation exists or is planned for the initial milestones.
 
 See [ROADMAP.md](ROADMAP.md) for the controlled path to application-level assurance.

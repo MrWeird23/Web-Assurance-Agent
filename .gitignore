@@ -6,4 +6,5 @@ __pycache__/
 *.py[cod]
 .env*
 !.env.example
+config/sites.yaml
 .DS_Store

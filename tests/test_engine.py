@@ -47,7 +47,7 @@ async def test_engine_confirms_down_event_and_publishes_report() -> None:
     assert outcome.incident.kind is IncidentKind.CONFIRMED_OUTAGE
     assert probe_calls == ["https://shop.example.com/", "https://shop.example.com/"]
     assert len(published) == 1
-    assert published[0]["embeds"][0]["title"] == "Confirmed outage: Client Shop"
+    assert published[0]["embeds"][0]["title"] == "Confirmed outage"
 
 
 async def test_engine_deduplicates_repeated_incident_reports() -> None:
@@ -158,7 +158,7 @@ async def test_engine_does_not_publish_stale_transition_after_newer_recovery() -
     await engine.handle(recovery)
     await engine.handle(stale_outage)
 
-    assert published_titles == ["Recovered: Example"]
+    assert published_titles == ["Recovered"]
 
 
 async def test_engine_serializes_concurrent_events_for_same_monitor() -> None:

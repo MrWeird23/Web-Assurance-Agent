@@ -1,9 +1,8 @@
-import re
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit
 
 from triage_agent.classification import Incident, IncidentKind
-from triage_agent.events import KumaEvent
+from triage_agent.events import EventState, KumaEvent
 from triage_agent.probes import ProbeResult
 
 _TITLES = {
@@ -18,26 +17,35 @@ _COLORS = {
     IncidentKind.TRANSIENT_FAILURE: 0xF0B232,
     IncidentKind.RECOVERED: 0x3BA55D,
 }
-_URL_PATTERN = re.compile(r"https?://[^\s<>\"]+", re.IGNORECASE)
-_SECRET_PATTERN = re.compile(
-    r"\b(token|api[_-]?key|secret|password|passwd|signature|sig)(\s*=\s*)[^\s&;,]+",
-    re.IGNORECASE,
-)
-
-
+_DESCRIPTIONS = {
+    IncidentKind.CONFIRMED_OUTAGE: "Independent confirmation indicates an origin HTTP failure.",
+    IncidentKind.MONITOR_BLOCKED: (
+        "Kuma reported HTTP 403, but independent confirmation succeeded."
+    ),
+    IncidentKind.TRANSIENT_FAILURE: (
+        "The reported failure could not be independently confirmed."
+    ),
+    IncidentKind.RECOVERED: "The monitored site is responding normally again.",
+}
+_RECOMMENDATIONS = {
+    IncidentKind.CONFIRMED_OUTAGE: "Inspect the application or origin service immediately.",
+    IncidentKind.MONITOR_BLOCKED: "Review WAF or bot-protection rules for the Kuma probe.",
+    IncidentKind.TRANSIENT_FAILURE: "Continue monitoring and verify agent connectivity.",
+    IncidentKind.RECOVERED: "No intervention is required.",
+}
 def _format_probe(probe: ProbeResult) -> str:
     status = (
         f"HTTP {probe.status_code}"
-        if probe.status_code is not None
-        else _sanitize_evidence(probe.error or "")
+        if type(probe.status_code) is int and 100 <= probe.status_code <= 599
+        else "No origin response"
     )
-    details = [status or "No response"]
-    if probe.latency_ms is not None:
+    details = [status]
+    if type(probe.latency_ms) is int and 0 <= probe.latency_ms <= 86_400_000:
         details.append(f"{probe.latency_ms} ms")
     if probe.server:
-        details.append(f"Server: {probe.server}")
+        details.append("Server header present")
     if probe.cloudflare_ray:
-        details.append(f"CF-Ray: {probe.cloudflare_ray}")
+        details.append("CF-Ray header present")
     return " · ".join(details)
 
 
@@ -48,23 +56,10 @@ def _safe_display_url(url: str) -> str:
         port = parsed.port
     except ValueError:
         return ""
-    if parsed.scheme not in {"http", "https"} or host is None:
+    if parsed.scheme != "https" or host is None or port not in (None, 443):
         return ""
     display_host = f"[{host}]" if ":" in host else host
-    if port is not None and port != {"http": 80, "https": 443}[parsed.scheme]:
-        display_host = f"{display_host}:{port}"
-    return urlunsplit((parsed.scheme, display_host, parsed.path, "", ""))
-
-
-def _sanitize_evidence(text: str) -> str:
-    without_url_secrets = _URL_PATTERN.sub(
-        lambda match: _safe_display_url(match.group(0)) or "[REDACTED URL]",
-        text,
-    )
-    return _SECRET_PATTERN.sub(
-        lambda match: f"{match.group(1)}{match.group(2)}[REDACTED]",
-        without_url_secrets,
-    )
+    return f"https://{display_host}/"
 
 
 def render_discord_payload(
@@ -77,19 +72,24 @@ def render_discord_payload(
         "username": "Web Assurance Agent",
         "embeds": [
             {
-                "title": f"{_TITLES[incident.kind]}: {event.monitor_name}",
+                "title": _TITLES[incident.kind],
                 "url": _safe_display_url(event.url),
                 "color": _COLORS[incident.kind],
-                "description": incident.summary,
+                "description": _DESCRIPTIONS[incident.kind],
                 "fields": [
                     {
                         "name": "Kuma evidence",
-                        "value": _sanitize_evidence(event.error)
-                        if event.error
-                        else "No detail supplied",
+                        "value": (
+                            "Kuma reported a recovery."
+                            if event.state is EventState.UP
+                            else "Kuma reported a failure."
+                        ),
                     },
                     {"name": "Independent confirmation", "value": confirmation},
-                    {"name": "Recommendation", "value": incident.recommendation},
+                    {
+                        "name": "Recommendation",
+                        "value": _RECOMMENDATIONS[incident.kind],
+                    },
                 ],
                 "footer": {"text": f"Kuma monitor {event.monitor_id} · {event.observed_at}"},
             }

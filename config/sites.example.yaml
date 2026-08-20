@@ -1,0 +1,46 @@
+version: 1
+sites:
+  - id: example-site
+    allowed_hosts:
+      - example.com
+    pages:
+      - id: example-home
+        url: https://example.com/
+        viewports:
+          - id: desktop
+            width: 1440
+            height: 900
+            device_scale_factor: 1.0
+          - id: mobile
+            width: 390
+            height: 844
+            device_scale_factor: 3.0
+        required_text:
+          - Example Domain
+        required_selectors:
+          - main
+        forbidden_text:
+          - Fatal error
+          - Parse error
+          - There has been a critical error on this website
+        critical_resource_patterns: []
+        ignored_resource_patterns: []
+        screenshot_masks: []
+        # Opt in only for shortcodes that should render on this page.
+        application_shortcodes: []
+        # Opt in only for plugin components that must render on this page.
+        # Each entry asserts one or more selectors exist, are visible, and have
+        # non-zero geometry. It proves the component rendered, not that every
+        # feature behind it works. Only the first DOM match per selector is
+        # checked, so selectors should uniquely identify one rendered element
+        # on this page (e.g. avoid a class shared by a hidden mobile duplicate).
+        plugin_assertions: []
+        # Example, for a page carrying a Contact Form 7 form:
+        # plugin_assertions:
+        #   - id: contact-form
+        #     kind: contact-form-7
+        #     required_selectors:
+        #       - form.wpcf7-form
+        #       - input[name="your-email"]
+        #       - input[type="submit"]
+        interactions: []

@@ -59,7 +59,7 @@ These constraints apply to every milestone:
 
 ### 1.1 Browser evidence domain model
 
-**Status:** next
+**Status:** complete in `0.2.0`
 
 Create browser-check types that are independent from Playwright so evaluation and reporting remain fast and deterministic in unit tests.
 
@@ -92,7 +92,13 @@ TDD order:
 6. Critical resource failure fails.
 7. Non-critical ignored resource remains informational.
 
+Additional completed evaluator coverage includes required text, selector visibility,
+console errors, unsuccessful document responses, and browser timeouts. The model remains
+independent from Playwright; browser execution begins in milestone 1.3.
+
 ### 1.2 Declarative site manifests
+
+**Status:** complete in `0.2.0`
 
 Create:
 
@@ -122,6 +128,8 @@ Validation rules:
 
 ### 1.3 Playwright browser runner
 
+**Status:** complete in `0.2.0`
+
 Add Playwright/Chromium through an isolated adapter.
 
 Required behavior:
@@ -146,9 +154,17 @@ Browser SSRF controls must cover:
 
 A deterministic local fixture server will exercise success, console failure, resource failure, redirect, and layout-collapse cases.
 
+The completed isolated adapter uses deterministic intercepted fixtures rather than public
+websites. It disables browser DNS and service workers, blocks WebRTC, WebSockets, and non-GET requests,
+pins every HTTP connection to a validated public address while preserving Host and TLS SNI,
+uses a single-use transport per pinned request to isolate host/SNI identities, revalidates bounded
+redirects, captures typed DOM/runtime/resource evidence without raw runtime error text, and
+supports opt-in masked viewport screenshot artifacts. Scheduler integration remains in later
+sections.
+
 ### 1.4 Safe manual check endpoint
 
-Proposed API:
+Implemented API:
 
 `POST /checks/pages/{page_id}`
 
@@ -164,7 +180,7 @@ Rules:
 
 ### 2.1 Deterministic error signatures
 
-Initial narrow signatures:
+Implemented narrow signatures over rendered visible body text:
 
 - WordPress critical-error page;
 - PHP `Fatal error` and `Parse error` output;
@@ -174,21 +190,51 @@ Initial narrow signatures:
 - visible unrendered shortcode patterns.
 
 Broad words such as `error` alone are prohibited because ordinary content would create false positives.
+Findings expose stable typed codes rather than raw page text. PHP signatures require both a
+specific failure prefix and a PHP file/line location; shortcode detection is restricted to a small
+allowlist of known WordPress/plugin shortcode names.
 
 ### 2.2 Plugin-specific public assertions
 
-Examples:
+**Status:** complete in `0.2.0`
 
-- Elementor: expected sections exist, are visible, and have non-zero geometry.
-- Contact Form 7: declared fields and controls render; no submission by default.
-- WooCommerce: product, cart, and checkout components render; no purchase or checkout completion.
-- Gallery/slider: required images load and initialized state exists.
-- Search: a known non-mutating query returns expected content.
-- Multilingual plugins: language selector and approved alternate routes work.
+`PluginAssertionManifest` declares an assertion ID, a bounded supported `kind` (Elementor, Contact
+Form 7, WooCommerce, gallery/slider, search, or multilingual components), and one or more required
+CSS selectors. The Playwright runner evaluates each declared selector for existence, visibility,
+and non-zero rendered geometry; browser evidence records only the assertion ID, kind, and a boolean
+result. Failed assertions produce the stable `plugin_assertion_failed` finding, and the manual check
+endpoint surfaces the failing assertion IDs directly, without exposing selectors or page content.
+Plugin assertion IDs are validated unique per page, supported kinds are schema- and evidence-level
+validated, and malformed evidence fails closed. Runner-level tests exercise satisfied and failed
+assertions — including missing, hidden, and zero-geometry selectors — against deterministic local
+fixtures for every supported kind.
+
+Acceptance criteria:
+
+- Elementor: declared public sections exist, are visible, and have non-zero geometry.
+- Contact Form 7: the declared form, fields, and controls render; no submission occurs.
+- WooCommerce: declared product, cart, or checkout components render; no purchase or state mutation.
+- Gallery/slider: declared image and initialized-state selectors render.
+- Search: a known non-mutating result component renders; the agent does not issue arbitrary queries.
+- Multilingual plugins: declared language-selector and approved alternate-route components render.
+- The manual endpoint returns only concise stable failure codes and assertion IDs.
+- Unknown page IDs still return `404` without browser startup, and concurrent manual checks remain
+  bounded with HTTP `429` when capacity is exhausted.
 
 “Plugin active” is evidence, not proof of functionality. Behavioral assertions are required.
 
 ### 2.3 Safe interactions
+
+**Status:** complete in `0.2.0`
+
+Manifest-declared `click` and `fill` interactions execute through the Playwright runner only when
+explicitly enabled per interaction. Each attempt records a stable `InteractionResult` (action,
+selector, success); a failed attempt produces the `interaction_failed` finding without exposing the
+selector. Open/close navigation, accordion expansion, slider advance, and tab selection are all
+expressed as `click`; filling a field and validating client-side required-field behavior with
+deliberately incomplete input are both expressed as `fill` (including with an empty value) — no
+additional interaction primitives were needed. Manifest validation rejects any action outside the
+closed `click`/`fill` set, and rejects a `click` carrying a stray value or a `fill` missing one.
 
 Initial non-destructive interactions:
 

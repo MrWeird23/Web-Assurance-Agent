@@ -1,4 +1,5 @@
 import ipaddress
+import unicodedata
 from urllib.parse import SplitResult, urlsplit
 
 
@@ -13,8 +14,8 @@ def validate_probe_url(
 ) -> SplitResult:
     try:
         url.encode("utf-8")
-        if any(character.isascii() and not character.isprintable() for character in url):
-            raise ValueError("URL contains a non-printable character")
+        if any(unicodedata.category(character).startswith("C") for character in url):
+            raise ValueError("URL contains a Unicode control character")
         parsed = urlsplit(url)
         port = parsed.port
     except (UnicodeEncodeError, ValueError) as exc:
