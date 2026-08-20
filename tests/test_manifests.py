@@ -1,10 +1,16 @@
 from collections.abc import MutableMapping
+from datetime import datetime
 from pathlib import Path
 from typing import cast
 
 import pytest
 
-from triage_agent.manifests import load_site_manifest, parse_site_manifest
+from triage_agent.manifests import (
+    MaintenanceWindow,
+    is_within_maintenance_window,
+    load_site_manifest,
+    parse_site_manifest,
+)
 
 VALID_MANIFEST = """
 version: 1
@@ -392,3 +398,82 @@ def test_rejects_scheduling_fields_outside_allowed_range(field: str, value: int)
 
     with pytest.raises(ValueError, match="Invalid site manifest"):
         parse_site_manifest(out_of_range)
+
+
+def test_manifest_accepts_maintenance_windows() -> None:
+    manifest_text = VALID_MANIFEST.replace(
+        "        wordpress_health:\n"
+        "          - id: site-health\n"
+        "            endpoint: https://example.com/wp-json/techx-monitor/v1/health\n"
+        "            token_secret_ref: techx-monitor-token",
+        "        wordpress_health:\n"
+        "          - id: site-health\n"
+        "            endpoint: https://example.com/wp-json/techx-monitor/v1/health\n"
+        "            token_secret_ref: techx-monitor-token\n"
+        "        maintenance_windows:\n"
+        "          - day_of_week: tue\n"
+        '            start_time: "02:00"\n'
+        '            end_time: "04:00"',
+    )
+    registry = parse_site_manifest(manifest_text)
+    page = registry.page("home")
+    assert len(page.maintenance_windows) == 1
+    assert page.maintenance_windows[0].day_of_week == "tue"
+
+
+def test_manifest_rejects_maintenance_window_where_start_is_not_before_end() -> None:
+    manifest_text = VALID_MANIFEST.replace(
+        "        wordpress_health:\n"
+        "          - id: site-health\n"
+        "            endpoint: https://example.com/wp-json/techx-monitor/v1/health\n"
+        "            token_secret_ref: techx-monitor-token",
+        "        wordpress_health:\n"
+        "          - id: site-health\n"
+        "            endpoint: https://example.com/wp-json/techx-monitor/v1/health\n"
+        "            token_secret_ref: techx-monitor-token\n"
+        "        maintenance_windows:\n"
+        "          - day_of_week: tue\n"
+        '            start_time: "04:00"\n'
+        '            end_time: "02:00"',
+    )
+    with pytest.raises(ValueError, match="maintenance window"):
+        parse_site_manifest(manifest_text)
+
+
+def test_manifest_rejects_malformed_maintenance_window_time() -> None:
+    manifest_text = VALID_MANIFEST.replace(
+        "        wordpress_health:\n"
+        "          - id: site-health\n"
+        "            endpoint: https://example.com/wp-json/techx-monitor/v1/health\n"
+        "            token_secret_ref: techx-monitor-token",
+        "        wordpress_health:\n"
+        "          - id: site-health\n"
+        "            endpoint: https://example.com/wp-json/techx-monitor/v1/health\n"
+        "            token_secret_ref: techx-monitor-token\n"
+        "        maintenance_windows:\n"
+        "          - day_of_week: tue\n"
+        '            start_time: "2:00"\n'
+        '            end_time: "04:00"',
+    )
+    with pytest.raises(ValueError):
+        parse_site_manifest(manifest_text)
+
+
+def test_is_within_maintenance_window_matches_day_and_time_range() -> None:
+    windows = [MaintenanceWindow(day_of_week="tue", start_time="02:00", end_time="04:00")]
+    assert is_within_maintenance_window(windows, datetime(2026, 8, 18, 3, 0)) is True  # Tuesday
+
+
+def test_is_within_maintenance_window_rejects_wrong_day() -> None:
+    windows = [MaintenanceWindow(day_of_week="tue", start_time="02:00", end_time="04:00")]
+    assert is_within_maintenance_window(windows, datetime(2026, 8, 19, 3, 0)) is False  # Wednesday
+
+
+def test_is_within_maintenance_window_boundaries_are_start_inclusive_end_exclusive() -> None:
+    windows = [MaintenanceWindow(day_of_week="tue", start_time="02:00", end_time="04:00")]
+    assert is_within_maintenance_window(windows, datetime(2026, 8, 18, 2, 0)) is True
+    assert is_within_maintenance_window(windows, datetime(2026, 8, 18, 4, 0)) is False
+
+
+def test_is_within_maintenance_window_empty_list_is_never_in_window() -> None:
+    assert is_within_maintenance_window([], datetime(2026, 8, 18, 3, 0)) is False
