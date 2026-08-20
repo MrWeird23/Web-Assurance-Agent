@@ -84,10 +84,12 @@ only if check latency, not alert noise, is the bottleneck.
 
 ## Known gaps
 
-- No maintenance-mode awareness: a deploy/backup window in the inventory's
-  "Maintenance window" column is not enforced anywhere — a check during that
-  window still alerts. Track recurring false positives there manually until
-  this is built.
+- Maintenance windows (`maintenance_windows` in the site manifest, see README
+  "Check scheduling") only cover scheduled fast/deep checks, are UTC and
+  recurring-weekly only, and only support a same-day start/end (no windows
+  spanning midnight). A deploy/backup window from the inventory's
+  "Maintenance window" column that doesn't fit those constraints still needs
+  to be tracked manually.
 - `scripts/approve_baseline.py` has no `--reject`; discard a bad pending
   capture by deleting its files under `<baseline-dir>/pending/` and letting
   the next check re-capture.

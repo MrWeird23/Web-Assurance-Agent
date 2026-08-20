@@ -54,3 +54,11 @@ sites:
         # fast_check_interval_seconds: 120   # 60-300; re-probes and triages like a Kuma webhook
         # deep_check_interval_seconds: 1800  # 900-3600; re-runs the full browser/WP health check
         # kuma_monitor_id: 1                 # required by fast_check_interval_seconds
+
+        # Optional: recurring weekly UTC windows during which scheduled fast/deep
+        # checks still run and record evidence, but don't alert (see README
+        # "Check scheduling"). Manual /checks/pages calls always alert regardless.
+        # maintenance_windows:
+        #   - day_of_week: tue      # mon-sun
+        #     start_time: "02:00"   # UTC, HH:MM, 24h
+        #     end_time: "04:00"     # must be later than start_time same day

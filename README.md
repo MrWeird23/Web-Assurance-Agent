@@ -281,6 +281,13 @@ Scheduled checks share the same global/per-site concurrency budgets as manual ch
 (`TRIAGE_SCHEDULER_GLOBAL_CONCURRENCY` / `TRIAGE_SCHEDULER_SITE_CONCURRENCY`), and each run is
 jittered to avoid every page waking up in lockstep.
 
+A page can also declare `maintenance_windows`: recurring weekly UTC windows (day of week, start
+time, end time) during which scheduled fast/deep checks still run and record evidence as normal,
+but any resulting incident is suppressed rather than published to Discord. This is meant for known
+deploy/backup windows so they stop generating alert noise. Manual `/checks/pages/{page_id}` calls
+and real Uptime Kuma webhooks are never suppressed, only scheduled checks are — an outage that
+persists past the window's end will alert as soon as the next check runs outside it.
+
 ### Browser check classification
 
 Both `/checks/pages/{page_id}` and scheduled deep checks return a single `classification` field
