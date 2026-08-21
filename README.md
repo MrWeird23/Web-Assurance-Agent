@@ -153,8 +153,32 @@ SSRF-safe HTTPS confirmation
 Incident classification
     |
     +-- Discord webhook, when configured
-    `-- structured dry-run log
+    `-- structured dry-run
 ```
+
+## Site-management console
+
+When `TRIAGE_SITE_MANIFEST` points to a writable manifest, the service exposes a
+small management console at `/admin/sites`.
+
+- Open `/admin/sites` through the same trusted private network or reverse proxy
+  used for the webhook service. The application does not implement user login;
+  access control remains the responsibility of that boundary.
+- Enter the webhook token when prompted. The browser keeps it only in memory and
+  sends it as an `Authorization: Bearer <token>` header for manifest reads and
+  writes.
+- Changes are validated against the manifest schema and the process-level
+  `TRIAGE_ALLOWED_HOSTS` boundary before an atomic write. The host allowlist
+  cannot be expanded from the console.
+- A successful save updates manual checks and scheduled checks immediately. No
+  process restart is required.
+- Use **Run check** on a page to execute the existing manual browser check and
+  inspect its classification, confidence, findings, and next action.
+
+The starter pilot and ownership notes are recorded in
+[`docs/pilot-inventory.md`](docs/pilot-inventory.md). Browser assertions in
+`config/sites.yaml` are deliberately conservative: retain only text and
+selectors that are stable across normal content releases.
 
 ## Requirements
 
@@ -258,6 +282,23 @@ A production deployment should place the service behind an approved TLS reverse 
 | `TRIAGE_VISUAL_BASELINE_DIRECTORY` | No | empty | Directory containing separately stored human-approved visual baselines |
 | `TRIAGE_MANUAL_CHECK_CONCURRENCY` | No | `1` | Maximum simultaneous manual browser checks per service process, from 1 to 4; excess requests receive HTTP 429 |
 | `TRIAGE_STATE_DATABASE_PATH` | No | empty | SQLite file for durable incident/publication state; unset keeps state in memory only (lost on restart, unsafe for multiple workers) |
+
+### Site configuration console
+
+When `TRIAGE_SITE_MANIFEST_PATH` is configured, open `/admin` to manage the
+site manifest through the built-in form. Enter the same secret configured in
+`TRIAGE_WEBHOOK_TOKEN`; the manifest API is not accessible without it.
+
+The console validates the complete manifest before replacing the YAML file and
+writes changes atomically. New hostnames remain fail-closed: add them to
+`TRIAGE_ALLOWED_HOSTS` before saving. A successful save reports that a service
+restart is required because scheduler jobs and runtime checkers are constructed
+from the manifest at startup.
+
+The initial console edits the primary page for each site, including required
+text and selectors, forbidden text, ignored resources, check intervals, and the
+explicit known-console-noise policy. Advanced manifest fields remain preserved
+when that page is edited.
 | `TRIAGE_SCHEDULER_GLOBAL_CONCURRENCY` | No | `2` | Maximum simultaneous scheduled (fast/deep) checks across all sites, from 1 to 8 |
 | `TRIAGE_SCHEDULER_SITE_CONCURRENCY` | No | `1` | Maximum simultaneous scheduled checks per site, from 1 to 4 |
 | `LOG_LEVEL` | No | `INFO` | Runtime log level |
