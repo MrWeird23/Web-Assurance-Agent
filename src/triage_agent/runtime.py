@@ -80,6 +80,7 @@ def build_app(settings: Settings) -> FastAPI:
     )
 
     page_checker: PageChecker | None = None
+    baseline_store: BaselineStore | None = None
     wordpress_health_checker: WordPressHealthChecker | None = None
     if settings.site_manifest_path is not None:
         manifest_store = ManifestStore(
@@ -92,9 +93,10 @@ def build_app(settings: Settings) -> FastAPI:
             artifact_directory=settings.browser_artifact_directory,
         )
         if settings.visual_baseline_directory is not None:
+            baseline_store = BaselineStore(settings.visual_baseline_directory)
             page_checker = VisualPageChecker(
                 checker=browser_checker,
-                baseline_store=BaselineStore(settings.visual_baseline_directory),
+                baseline_store=baseline_store,
             )
         else:
             page_checker = browser_checker
@@ -182,4 +184,8 @@ def build_app(settings: Settings) -> FastAPI:
         wordpress_alert_publisher=publisher,
         manual_check_concurrency=settings.manual_check_concurrency,
         manifest_store=manifest_store,
+        admin_probe=lambda url, allowed_hosts: probe_url(
+            url, allowed_hosts=allowed_hosts, client=client, resolver=resolve_addresses
+        ),
+        baseline_store=baseline_store,
     )

@@ -68,6 +68,11 @@ async def test_admin_shell_is_available_without_exposing_manifest(tmp_path: Path
     assert response.headers["content-type"].startswith("text/html")
     assert "Site configuration" in response.text
     assert "required_text: [Welcome]" not in response.text
+    assert "Test link" in response.text
+    assert "Run tests" in response.text
+    assert "Reference screenshots" in response.text
+    assert 'role="dialog"' in response.text
+    assert 'aria-live="polite"' in response.text
 
 
 async def test_admin_manifest_api_requires_authentication(tmp_path: Path) -> None:

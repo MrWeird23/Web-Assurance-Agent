@@ -1,16 +1,20 @@
 import asyncio
+import io
 import json
 import logging
 import secrets
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
+from PIL import Image, UnidentifiedImageError
 
 from triage_agent import __version__
 from triage_agent.admin_ui import ADMIN_HTML
+from triage_agent.baselines import BaselineStore
 from triage_agent.browser_checks import (
     BrowserEvidence,
     classification_confidence,
@@ -21,6 +25,7 @@ from triage_agent.browser_checks import (
 from triage_agent.discord import DiscordPublishError
 from triage_agent.manifest_store import ManifestStore
 from triage_agent.manifests import ManifestRegistry, PageManifest, ViewportManifest
+from triage_agent.probes import ProbeResult
 from triage_agent.wordpress_health import WordPressHealthResult
 from triage_agent.wordpress_reporting import (
     render_wordpress_health_discord_payload,
@@ -30,6 +35,7 @@ from triage_agent.wordpress_reporting import (
 MAX_WEBHOOK_BODY_BYTES = 65_536
 MAX_ADMIN_BODY_BYTES = 1_048_576
 AlertPublisher = Callable[[dict[str, Any]], Awaitable[None]]
+AdminProbe = Callable[[str, set[str]], Awaitable[ProbeResult]]
 logger = logging.getLogger(__name__)
 
 
@@ -69,6 +75,8 @@ def create_app(
     wordpress_alert_publisher: AlertPublisher | None = None,
     manual_check_concurrency: int = 1,
     manifest_store: ManifestStore | None = None,
+    admin_probe: AdminProbe | None = None,
+    baseline_store: BaselineStore | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="Web Assurance Agent",
@@ -126,6 +134,103 @@ def create_app(
             except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
             return {"status": "saved", "restart_required": True}
+
+        @app.post("/admin/api/pages/{page_id}/test-link", include_in_schema=False)
+        async def test_admin_link(page_id: str, request: Request) -> dict[str, Any]:
+            require_admin(request)
+            if admin_probe is None:
+                raise HTTPException(status_code=503, detail="Link testing is not configured")
+            page, allowed_hosts, _ = _admin_page(manifest_store, page_id)
+            result = await admin_probe(page.url, allowed_hosts)
+            return {
+                "ok": result.ok,
+                "status_code": result.status_code,
+                "latency_ms": result.latency_ms,
+                "final_url": result.final_url,
+                "error": result.error,
+            }
+
+        @app.post("/admin/api/pages/{page_id}/run-tests", include_in_schema=False)
+        async def run_admin_tests(page_id: str, request: Request) -> StreamingResponse:
+            require_admin(request)
+            if page_checker is None:
+                raise HTTPException(status_code=503, detail="Page testing is not configured")
+            page, allowed_hosts, site_id = _admin_page(manifest_store, page_id)
+
+            async def events() -> Any:
+                yield _ndjson({"event": "start", "page_id": page.id})
+                evidence: list[BrowserEvidence] = []
+                for viewport in page.viewports:
+                    item = await page_checker.run(
+                        page=page, viewport=viewport, allowed_hosts=allowed_hosts
+                    )
+                    evidence.append(item)
+                    evaluation = evaluate_browser_evidence(
+                        item, ignore_console_errors=page.ignore_console_errors
+                    )
+                    yield _ndjson(
+                        {
+                            "event": "viewport",
+                            "viewport_id": viewport.id,
+                            "status": "passed" if evaluation.healthy else "failed",
+                            "duration_ms": item.duration_ms,
+                            "failure_codes": sorted(
+                                {finding.code for finding in evaluation.failures}
+                            ),
+                            "information_codes": sorted(
+                                {finding.code for finding in evaluation.information}
+                            ),
+                            "console_errors": sorted(set(item.console_errors)),
+                        }
+                    )
+                result = await _summarize_page_check(
+                    page=page,
+                    evidence=evidence,
+                    allowed_hosts=allowed_hosts,
+                    site_id=site_id,
+                    wordpress_health_checker=wordpress_health_checker,
+                    wordpress_alert_publisher=wordpress_alert_publisher,
+                )
+                yield _ndjson({"event": "result", **result})
+
+            return StreamingResponse(events(), media_type="application/x-ndjson")
+
+        @app.put(
+            "/admin/api/pages/{page_id}/baselines/{viewport_id}", include_in_schema=False
+        )
+        async def upload_admin_baseline(
+            page_id: str, viewport_id: str, request: Request
+        ) -> dict[str, Any]:
+            require_admin(request)
+            if baseline_store is None:
+                raise HTTPException(status_code=503, detail="Visual baselines are not configured")
+            page, _, _ = _admin_page(manifest_store, page_id)
+            if viewport_id not in {viewport.id for viewport in page.viewports}:
+                raise HTTPException(status_code=404, detail="Unknown viewport")
+            operator = request.headers.get("X-Operator-Label", "").strip()
+            if not operator:
+                raise HTTPException(status_code=422, detail="Operator label is required")
+            png = await request.body()
+            if len(png) > MAX_ADMIN_BODY_BYTES:
+                raise HTTPException(status_code=413, detail="Screenshot is too large")
+            try:
+                with Image.open(io.BytesIO(png)) as image:
+                    if image.format != "PNG":
+                        raise ValueError
+                    image.verify()
+            except (UnidentifiedImageError, OSError, ValueError):
+                raise HTTPException(status_code=422, detail="A valid PNG is required") from None
+            now = datetime.now(UTC)
+            baseline_store.capture(
+                page_id=page_id, viewport_id=viewport_id, png_bytes=png, captured_at=now
+            )
+            record = baseline_store.approve(
+                page_id=page_id,
+                viewport_id=viewport_id,
+                operator_label=operator,
+                approved_at=now,
+            )
+            return {"status": record.status, "sha256": record.sha256}
 
     @app.post("/webhooks/uptime-kuma", status_code=202)
     async def uptime_kuma_webhook(
@@ -185,6 +290,22 @@ def create_app(
     return app
 
 
+def _admin_page(
+    store: ManifestStore, page_id: str
+) -> tuple[PageManifest, set[str], str]:
+    try:
+        page = store.registry.page(page_id)
+        allowed_hosts = set(store.registry.allowed_hosts(page_id))
+        site_id = store.registry.site_id(page_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Unknown page") from None
+    return page, allowed_hosts, site_id
+
+
+def _ndjson(payload: dict[str, Any]) -> bytes:
+    return (json.dumps(payload, separators=(",", ":")) + "\n").encode()
+
+
 async def run_page_check(
     *,
     page: PageManifest,
@@ -196,11 +317,30 @@ async def run_page_check(
 ) -> dict[str, Any]:
     """Run every viewport + WordPress health check for one page; shared by the
     manual /checks/pages endpoint and the background scheduler's deep checks."""
-    wordpress_health = []
     evidence = [
         await page_checker.run(page=page, viewport=viewport, allowed_hosts=allowed_hosts)
         for viewport in page.viewports
     ]
+    return await _summarize_page_check(
+        page=page,
+        evidence=evidence,
+        allowed_hosts=allowed_hosts,
+        site_id=site_id,
+        wordpress_health_checker=wordpress_health_checker,
+        wordpress_alert_publisher=wordpress_alert_publisher,
+    )
+
+
+async def _summarize_page_check(
+    *,
+    page: PageManifest,
+    evidence: list[BrowserEvidence],
+    allowed_hosts: set[str],
+    site_id: str,
+    wordpress_health_checker: "WordPressHealthChecker | None",
+    wordpress_alert_publisher: AlertPublisher | None,
+) -> dict[str, Any]:
+    wordpress_health = []
     if wordpress_health_checker is not None:
         for health_check in page.wordpress_health:
             health = await wordpress_health_checker.run(
