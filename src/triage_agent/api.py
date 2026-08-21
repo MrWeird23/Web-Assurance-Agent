@@ -7,8 +7,10 @@ from contextlib import AbstractAsyncContextManager
 from typing import Any, Protocol
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse
 
 from triage_agent import __version__
+from triage_agent.admin_ui import ADMIN_HTML
 from triage_agent.browser_checks import (
     BrowserEvidence,
     classification_confidence,
@@ -17,6 +19,7 @@ from triage_agent.browser_checks import (
     evaluate_browser_evidence,
 )
 from triage_agent.discord import DiscordPublishError
+from triage_agent.manifest_store import ManifestStore
 from triage_agent.manifests import ManifestRegistry, PageManifest, ViewportManifest
 from triage_agent.wordpress_health import WordPressHealthResult
 from triage_agent.wordpress_reporting import (
@@ -25,6 +28,7 @@ from triage_agent.wordpress_reporting import (
 )
 
 MAX_WEBHOOK_BODY_BYTES = 65_536
+MAX_ADMIN_BODY_BYTES = 1_048_576
 AlertPublisher = Callable[[dict[str, Any]], Awaitable[None]]
 logger = logging.getLogger(__name__)
 
@@ -64,6 +68,7 @@ def create_app(
     wordpress_health_checker: WordPressHealthChecker | None = None,
     wordpress_alert_publisher: AlertPublisher | None = None,
     manual_check_concurrency: int = 1,
+    manifest_store: ManifestStore | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="Web Assurance Agent",
@@ -81,6 +86,46 @@ def create_app(
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/admin", response_class=HTMLResponse, include_in_schema=False)
+    async def admin_shell() -> str:
+        return ADMIN_HTML
+
+    if manifest_store is not None:
+
+        def require_admin(request: Request) -> None:
+            authorization = request.headers.get("Authorization", "")
+            bearer = authorization[7:] if authorization.startswith("Bearer ") else ""
+            supplied = bearer or request.headers.get("X-Triage-Token", "")
+            if not supplied or not secrets.compare_digest(supplied, webhook_token):
+                raise HTTPException(status_code=401, detail="Invalid administrative token")
+
+        @app.get("/admin/api/manifest", include_in_schema=False)
+        async def read_admin_manifest(request: Request) -> dict[str, Any]:
+            require_admin(request)
+            return manifest_store.read()
+
+        @app.put("/admin/api/manifest", include_in_schema=False)
+        async def replace_admin_manifest(request: Request) -> dict[str, Any]:
+            require_admin(request)
+            content_length = request.headers.get("Content-Length")
+            if content_length is not None:
+                try:
+                    if int(content_length) > MAX_ADMIN_BODY_BYTES:
+                        raise HTTPException(status_code=413, detail="Manifest payload is too large")
+                except ValueError as exc:
+                    raise HTTPException(status_code=400, detail="Invalid Content-Length") from exc
+            body = await request.body()
+            if len(body) > MAX_ADMIN_BODY_BYTES:
+                raise HTTPException(status_code=413, detail="Manifest payload is too large")
+            try:
+                payload = json.loads(body)
+                if not isinstance(payload, dict):
+                    raise ValueError("Manifest must be an object")
+                manifest_store.replace(payload)
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            return {"status": "saved", "restart_required": True}
 
     @app.post("/webhooks/uptime-kuma", status_code=202)
     async def uptime_kuma_webhook(
@@ -187,7 +232,10 @@ async def run_page_check(
                             page.id,
                             health_check.id,
                         )
-    evaluations = [evaluate_browser_evidence(item) for item in evidence]
+    evaluations = [
+        evaluate_browser_evidence(item, ignore_console_errors=page.ignore_console_errors)
+        for item in evidence
+    ]
     failed_viewports = [
         item.device_profile
         for item, evaluation in zip(evidence, evaluations, strict=True)

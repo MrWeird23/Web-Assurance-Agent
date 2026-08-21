@@ -19,11 +19,11 @@ from triage_agent.discord import DiscordPublisher, DiscordPublishError
 from triage_agent.durable_registry import DurableIncidentRegistry
 from triage_agent.engine import Publisher, TriageEngine
 from triage_agent.events import EventState, KumaEvent
+from triage_agent.manifest_store import ManifestStore
 from triage_agent.manifests import (
     ManifestRegistry,
     PageManifest,
     is_within_maintenance_window,
-    load_site_manifest,
 )
 from triage_agent.probes import ProbeResult, probe_url, resolve_addresses
 from triage_agent.reporting import render_browser_check_discord_payload
@@ -57,6 +57,7 @@ def build_app(settings: Settings) -> FastAPI:
         publisher = dry_run_publish
 
     manifest_registry: ManifestRegistry | None = None
+    manifest_store: ManifestStore | None = None
     scheduler: CheckScheduler | None = None
 
     async def on_publish(event: KumaEvent, incident: Incident) -> None:
@@ -81,7 +82,11 @@ def build_app(settings: Settings) -> FastAPI:
     page_checker: PageChecker | None = None
     wordpress_health_checker: WordPressHealthChecker | None = None
     if settings.site_manifest_path is not None:
-        manifest_registry = load_site_manifest(settings.site_manifest_path)
+        manifest_store = ManifestStore(
+            settings.site_manifest_path,
+            permitted_hosts=set(settings.allowed_hosts),
+        )
+        manifest_registry = manifest_store.registry
         browser_checker = PlaywrightBrowserRunner(
             resolver=resolve_addresses,
             artifact_directory=settings.browser_artifact_directory,
@@ -176,4 +181,5 @@ def build_app(settings: Settings) -> FastAPI:
         wordpress_health_checker=wordpress_health_checker,
         wordpress_alert_publisher=publisher,
         manual_check_concurrency=settings.manual_check_concurrency,
+        manifest_store=manifest_store,
     )
