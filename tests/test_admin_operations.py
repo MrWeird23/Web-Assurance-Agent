@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from io import BytesIO
 from pathlib import Path
 
@@ -194,5 +195,67 @@ async def test_admin_uploads_and_approves_reference_screenshot(tmp_path: Path) -
     approved = baselines.current(page_id="home", viewport_id="desktop")
     assert response.status_code == 200
     assert response.json()["status"] == "approved"
+    assert approved is not None
+    assert approved.operator_label == "Rodrigo"
+
+
+async def test_admin_captures_previews_and_approves_reference_screenshot(
+    tmp_path: Path,
+) -> None:
+    screenshot = tmp_path / "captured.png"
+    screenshot.write_bytes(_png())
+
+    class CapturePageChecker(StubPageChecker):
+        async def run(
+            self,
+            *,
+            page: PageManifest,
+            viewport: ViewportManifest,
+            allowed_hosts: set[str],
+        ) -> BrowserEvidence:
+            evidence = await super().run(
+                page=page, viewport=viewport, allowed_hosts=allowed_hosts
+            )
+            return replace(
+                evidence,
+                screenshot=ScreenshotArtifact(
+                    path=str(screenshot),
+                    sha256="unused",
+                    width=20,
+                    height=20,
+                ),
+            )
+
+    baselines = BaselineStore(tmp_path / "baselines")
+    app = create_app(
+        engine=StubEngine(),
+        webhook_token="expected-secret",
+        manifest_store=_store(tmp_path),
+        baseline_store=baselines,
+        page_checker=CapturePageChecker(),
+    )
+    headers = {"Authorization": "Bearer expected-secret"}
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        captured = await client.post(
+            "/admin/api/pages/home/baselines/desktop/capture", headers=headers
+        )
+        preview = await client.get(
+            "/admin/api/pages/home/baselines/desktop/pending", headers=headers
+        )
+        approved_response = await client.post(
+            "/admin/api/pages/home/baselines/desktop/approve",
+            headers={**headers, "X-Operator-Label": "Rodrigo"},
+        )
+
+    approved = baselines.current(page_id="home", viewport_id="desktop")
+    assert captured.status_code == 200
+    assert captured.json()["status"] == "pending"
+    assert preview.status_code == 200
+    assert preview.headers["content-type"] == "image/png"
+    assert preview.content == _png()
+    assert approved_response.status_code == 200
+    assert approved_response.json()["status"] == "approved"
     assert approved is not None
     assert approved.operator_label == "Rodrigo"

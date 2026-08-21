@@ -6,10 +6,11 @@ import secrets
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Protocol
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from PIL import Image, UnidentifiedImageError
 
 from triage_agent import __version__
@@ -230,6 +231,88 @@ def create_app(
                 operator_label=operator,
                 approved_at=now,
             )
+            return {"status": record.status, "sha256": record.sha256}
+
+        @app.post(
+            "/admin/api/pages/{page_id}/baselines/{viewport_id}/capture",
+            include_in_schema=False,
+        )
+        async def capture_admin_baseline(
+            page_id: str, viewport_id: str, request: Request
+        ) -> dict[str, Any]:
+            require_admin(request)
+            if baseline_store is None or page_checker is None:
+                raise HTTPException(status_code=503, detail="Visual capture is not configured")
+            page, allowed_hosts, _ = _admin_page(manifest_store, page_id)
+            viewport = next(
+                (item for item in page.viewports if item.id == viewport_id), None
+            )
+            if viewport is None:
+                raise HTTPException(status_code=404, detail="Unknown viewport")
+            evidence = await page_checker.run(
+                page=page, viewport=viewport, allowed_hosts=allowed_hosts
+            )
+            if evidence.screenshot is None:
+                raise HTTPException(
+                    status_code=502, detail="The browser did not produce a screenshot"
+                )
+            try:
+                png = Path(evidence.screenshot.path).read_bytes()
+            except OSError:
+                raise HTTPException(
+                    status_code=502, detail="The captured screenshot is unavailable"
+                ) from None
+            record = baseline_store.capture(
+                page_id=page_id,
+                viewport_id=viewport_id,
+                png_bytes=png,
+                captured_at=datetime.now(UTC),
+            )
+            return {"status": record.status, "sha256": record.sha256}
+
+        @app.get(
+            "/admin/api/pages/{page_id}/baselines/{viewport_id}/pending",
+            include_in_schema=False,
+        )
+        async def preview_admin_baseline(
+            page_id: str, viewport_id: str, request: Request
+        ) -> Response:
+            require_admin(request)
+            if baseline_store is None:
+                raise HTTPException(status_code=503, detail="Visual baselines are not configured")
+            page, _, _ = _admin_page(manifest_store, page_id)
+            if viewport_id not in {viewport.id for viewport in page.viewports}:
+                raise HTTPException(status_code=404, detail="Unknown viewport")
+            png = baseline_store.pending_png(page_id=page_id, viewport_id=viewport_id)
+            if png is None:
+                raise HTTPException(status_code=404, detail="No pending reference screenshot")
+            return Response(content=png, media_type="image/png")
+
+        @app.post(
+            "/admin/api/pages/{page_id}/baselines/{viewport_id}/approve",
+            include_in_schema=False,
+        )
+        async def approve_admin_baseline(
+            page_id: str, viewport_id: str, request: Request
+        ) -> dict[str, Any]:
+            require_admin(request)
+            if baseline_store is None:
+                raise HTTPException(status_code=503, detail="Visual baselines are not configured")
+            page, _, _ = _admin_page(manifest_store, page_id)
+            if viewport_id not in {viewport.id for viewport in page.viewports}:
+                raise HTTPException(status_code=404, detail="Unknown viewport")
+            operator = request.headers.get("X-Operator-Label", "").strip()
+            if not operator:
+                raise HTTPException(status_code=422, detail="Operator label is required")
+            try:
+                record = baseline_store.approve(
+                    page_id=page_id,
+                    viewport_id=viewport_id,
+                    operator_label=operator,
+                    approved_at=datetime.now(UTC),
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
             return {"status": record.status, "sha256": record.sha256}
 
     @app.post("/webhooks/uptime-kuma", status_code=202)

@@ -77,6 +77,13 @@ class BaselineStore:
             return None
         return _from_json(json.loads(metadata_path.read_text()))
 
+    def pending_png(self, *, page_id: str, viewport_id: str) -> bytes | None:
+        slot = _slot(page_id, viewport_id)
+        path = self._pending_dir / f"{slot}.png"
+        if not path.exists():
+            return None
+        return path.read_bytes()
+
     def approve(
         self,
         *,

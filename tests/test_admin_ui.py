@@ -71,6 +71,9 @@ async def test_admin_shell_is_available_without_exposing_manifest(tmp_path: Path
     assert "Test link" in response.text
     assert "Run tests" in response.text
     assert "Reference screenshots" in response.text
+    assert "Capture reference" in response.text
+    assert "Approve reference" in response.text
+    assert 'id="baselinePreview"' in response.text
     assert 'role="dialog"' in response.text
     assert 'aria-live="polite"' in response.text
 
