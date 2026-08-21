@@ -207,6 +207,9 @@ export TRIAGE_WEBHOOK_TOKEN='replace-with-a-long-random-token'
 export TRIAGE_ALLOWED_HOSTS='example.com,www.example.com'
 export TRIAGE_CONFIRMATION_ATTEMPTS=2
 export TRIAGE_CONFIRMATION_DELAY_SECONDS=0
+export TRIAGE_SITE_MANIFEST_PATH="$PWD/config/sites.yaml"
+export TRIAGE_BROWSER_ARTIFACT_DIRECTORY="$PWD/data/browser-artifacts"
+export TRIAGE_VISUAL_BASELINE_DIRECTORY="$PWD/data/baselines"
 
 uv run uvicorn triage_agent.main:create_runtime_app \
   --factory \

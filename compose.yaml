@@ -27,7 +27,6 @@ services:
       - type: bind
         source: ./data/baselines
         target: /var/lib/triage/baselines
-        read_only: true
         bind:
           create_host_path: false
       - type: bind
