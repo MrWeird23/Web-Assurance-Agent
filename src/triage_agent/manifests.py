@@ -153,6 +153,7 @@ class PageManifest(StrictManifestModel):
     forbidden_text: tuple[NonEmptyText, ...] = Field(default=(), max_length=100)
     critical_resource_patterns: tuple[NonEmptyText, ...] = Field(default=(), max_length=100)
     ignored_resource_patterns: tuple[NonEmptyText, ...] = Field(default=(), max_length=100)
+    ignore_console_errors: StrictBool = False
     screenshot_masks: tuple[NonEmptyText, ...] = Field(default=(), max_length=100)
     application_shortcodes: tuple[ShortcodeName, ...] = Field(default=(), max_length=20)
     plugin_assertions: tuple[PluginAssertionManifest, ...] = Field(default=(), max_length=20)

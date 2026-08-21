@@ -320,7 +320,9 @@ def _is_valid_evidence(evidence: BrowserEvidence) -> bool:
     return True
 
 
-def evaluate_browser_evidence(evidence: BrowserEvidence) -> BrowserEvaluation:
+def evaluate_browser_evidence(
+    evidence: BrowserEvidence, *, ignore_console_errors: bool = False
+) -> BrowserEvaluation:
     if not _is_valid_evidence(evidence):
         return BrowserEvaluation(
             healthy=False,
@@ -334,6 +336,7 @@ def evaluate_browser_evidence(evidence: BrowserEvidence) -> BrowserEvaluation:
         )
 
     failures: list[BrowserFinding] = []
+    information: list[BrowserFinding] = []
     if evidence.visual_assurance is not None and evidence.visual_assurance.status == "changed":
         failures.append(
             BrowserFinding(
@@ -422,13 +425,17 @@ def evaluate_browser_evidence(evidence: BrowserEvidence) -> BrowserEvaluation:
         for result in evidence.interaction_results
         if not result.succeeded
     )
-    failures.extend(
+    console_findings = tuple(
         BrowserFinding(
             code="console_error",
             message="The page emitted a browser console error.",
         )
         for _error in evidence.console_errors
     )
+    if ignore_console_errors:
+        information.extend(console_findings)
+    else:
+        failures.extend(console_findings)
     failures.extend(
         BrowserFinding(
             code="page_exception",
@@ -444,14 +451,14 @@ def evaluate_browser_evidence(evidence: BrowserEvidence) -> BrowserEvaluation:
         for resource in evidence.resource_failures
         if resource.critical
     )
-    information = [
+    information.extend(
         BrowserFinding(
             code="noncritical_resource_failure",
             message="A non-critical page resource failed to load.",
         )
         for resource in evidence.resource_failures
         if not resource.critical
-    ]
+    )
     if (
         evidence.visual_assurance is not None
         and evidence.visual_assurance.status == "baseline_pending"
