@@ -195,8 +195,11 @@ There is no seeded default account. Create the first admin user with the
 password interactively -- it never touches `.env` or shell history):
 
 ```bash
-docker compose exec web-assurance-agent python -m triage_agent.manage_users create <username>
+docker compose exec -it web-assurance-agent /app/.venv/bin/python -m triage_agent.manage_users create <username>
 ```
+
+`-it` is required (password prompt needs a TTY) and the venv's `python`
+must be used explicitly -- the container has no venv on `PATH`.
 
 Other subcommands: `reset-password <username>`, `delete <username>`, and
 `list`. All of them require `TRIAGE_STATE_DATABASE_PATH` to be set, since
