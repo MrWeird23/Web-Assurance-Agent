@@ -158,18 +158,22 @@ Incident classification
 
 ## Site-management console
 
-When `TRIAGE_SITE_MANIFEST` points to a writable manifest, the service exposes a
-small management console at `/admin/sites`.
+When `TRIAGE_SITE_MANIFEST_PATH` points to a writable manifest, the service exposes a
+small management console at `/admin`.
 
-- Open `/admin/sites` through the same trusted private network or reverse proxy
+- Open `/admin` through the same trusted private network or reverse proxy
   used for the webhook service. The application does not implement user login;
   access control remains the responsibility of that boundary.
-- Enter the webhook token when prompted. The browser keeps it only in memory and
-  sends it as an `Authorization: Bearer <token>` header for manifest reads and
-  writes.
+- Enter the webhook token when prompted. The browser persists it in
+  `localStorage` (so it survives a page reload) and sends it as an
+  `Authorization: Bearer <token>` header for manifest reads and writes.
+- Entering a page URL can auto-suggest required text/selectors from that page
+  (via a safe, size-capped fetch of the page itself).
 - Changes are validated against the manifest schema and the process-level
   `TRIAGE_ALLOWED_HOSTS` boundary before an atomic write. The host allowlist
-  cannot be expanded from the console.
+  cannot be expanded from the console, though `TRIAGE_ALLOWED_HOSTS` itself
+  supports `*.example.com` wildcard entries and a bare `*` (allow any public
+  host) to reduce how often it needs editing.
 - A successful save updates manual checks and scheduled checks immediately. No
   process restart is required.
 - Use **Run check** on a page to execute the existing manual browser check and
@@ -275,7 +279,7 @@ A production deployment should place the service behind an approved TLS reverse 
 | Variable | Required | Default | Purpose |
 |---|---:|---:|---|
 | `TRIAGE_WEBHOOK_TOKEN` | Yes | — | Shared secret sent as `X-Triage-Token`; at least 16 characters |
-| `TRIAGE_ALLOWED_HOSTS` | Yes | — | Comma-separated exact public hostnames the service may request |
+| `TRIAGE_ALLOWED_HOSTS` | Yes | — | Comma-separated public hostnames the service may request; entries may be exact (`example.com`), a wildcard (`*.example.com`, matches the apex and all subdomains), or a bare `*` to allow any public host |
 | `TRIAGE_DISCORD_WEBHOOK_URL` | No | empty | Discord destination; empty enables dry-run logging |
 | `TRIAGE_CONFIRMATION_ATTEMPTS` | No | `2` | Confirmation attempts, from 1 to 5 |
 | `TRIAGE_CONFIRMATION_DELAY_SECONDS` | No | `5` | Delay between attempts, from 0 to 60 seconds |
@@ -294,9 +298,9 @@ site manifest through the built-in form. Enter the same secret configured in
 
 The console validates the complete manifest before replacing the YAML file and
 writes changes atomically. New hostnames remain fail-closed: add them to
-`TRIAGE_ALLOWED_HOSTS` before saving. A successful save reports that a service
-restart is required because scheduler jobs and runtime checkers are constructed
-from the manifest at startup.
+`TRIAGE_ALLOWED_HOSTS` (or cover them with a wildcard/`*` entry) before saving.
+A successful save rebuilds the scheduler's check loops and reloads the manifest
+used by manual checks immediately -- no service restart is required.
 
 The initial console edits the primary page for each site, including required
 text and selectors, forbidden text, ignored resources, check intervals, the
@@ -314,9 +318,11 @@ Any failed crawled URL contributes to the full-triage failure classification.
 | `LOG_LEVEL` | No | `INFO` | Runtime log level |
 
 For Compose deployments, copy `config/sites.example.yaml` to `config/sites.yaml` and replace the
-example host, page IDs, assertions, and viewports before starting the service. Compose mounts that
-file read-only and stores transient screenshot artifacts under the container's bounded `/tmp`
-filesystem.
+example host, page IDs, assertions, and viewports before starting the service. Compose mounts the
+whole `config/` directory read-write (the admin console's atomic write needs to create a temp file
+alongside `sites.yaml`, not just replace its contents) and stores transient screenshot artifacts
+under the container's bounded `/tmp` filesystem; the rest of the container filesystem stays
+read-only.
 
 ### Check scheduling
 
