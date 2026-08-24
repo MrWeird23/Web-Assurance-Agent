@@ -104,7 +104,7 @@ async def test_admin_shell_is_available_without_exposing_manifest(tmp_path: Path
     assert "e.event==='crawl_start'" in response.text
     assert "e.event==='crawl_page'" in response.text
     assert "e.event==='crawl_result'" in response.text
-    assert 'id="loginBar"' in response.text
+    assert 'id="loginScreen"' in response.text
     assert 'id="username"' in response.text
     assert 'id="logout"' in response.text
     assert 'id="openSettings"' in response.text
