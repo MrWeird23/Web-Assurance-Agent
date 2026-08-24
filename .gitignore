@@ -7,4 +7,7 @@ __pycache__/
 .env*
 !.env.example
 config/sites.yaml
+data/state/
+data/baselines/pending/
+.hermes/
 .DS_Store

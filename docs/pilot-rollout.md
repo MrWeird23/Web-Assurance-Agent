@@ -19,6 +19,11 @@ pair). Leave `fast_check_interval_seconds` / `deep_check_interval_seconds` /
 `kuma_monitor_id` commented out for now — the scheduler stays off until
 step 3 has run clean.
 
+For the first pilot page, optionally enable its bounded `crawl` with a small
+`max_pages` and `max_depth`. Exclude authentication, administration, cart,
+checkout, account, and other state-changing routes. Review every discovered URL
+in the console before widening either bound or enabling crawl on another site.
+
 Validate the manifest loads:
 
 ```bash

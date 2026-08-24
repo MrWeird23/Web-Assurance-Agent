@@ -1,4 +1,6 @@
 import json
+from collections.abc import AsyncIterator
+from copy import deepcopy
 from dataclasses import replace
 from io import BytesIO
 from pathlib import Path
@@ -9,8 +11,9 @@ from PIL import Image
 from triage_agent.api import create_app
 from triage_agent.baselines import BaselineStore
 from triage_agent.browser_checks import BrowserEvidence, ScreenshotArtifact, Viewport
+from triage_agent.crawler import CrawlResult
 from triage_agent.manifest_store import ManifestStore
-from triage_agent.manifests import PageManifest, ViewportManifest
+from triage_agent.manifests import CrawlManifest, PageManifest, ViewportManifest
 from triage_agent.probes import ProbeResult
 
 MANIFEST = """\
@@ -65,6 +68,27 @@ class StubPageChecker:
             duration_ms=12,
             timed_out=False,
             screenshot=ScreenshotArtifact("example.png", "a" * 64, viewport.width, viewport.height),
+        )
+
+
+class StubSiteCrawler:
+    async def crawl(
+        self,
+        *,
+        start_url: str,
+        allowed_hosts: set[str],
+        config: CrawlManifest,
+    ) -> AsyncIterator[CrawlResult]:
+        assert allowed_hosts == {"example.com"}
+        assert config.enabled is True
+        yield CrawlResult(start_url, start_url, 0, 200, "text/html", None)
+        yield CrawlResult(
+            "https://example.com/missing",
+            "https://example.com/missing",
+            1,
+            404,
+            "text/html",
+            None,
         )
 
 
@@ -139,6 +163,130 @@ async def test_admin_runs_page_tests_as_streamed_ndjson(tmp_path: Path) -> None:
         "console_errors": [],
     }
     assert events[-1]["classification"] == "healthy"
+
+
+async def test_admin_runs_full_triage_for_every_configured_page(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    payload = store.read()
+    second_page = deepcopy(payload["sites"][0]["pages"][0])
+    second_page.update({"id": "contact", "url": "https://example.com/contact"})
+    payload["sites"][0]["pages"].append(second_page)
+    store.replace(payload)
+    checker = StubPageChecker()
+    app = create_app(
+        engine=StubEngine(),
+        webhook_token="expected-secret",
+        manifest_store=store,
+        page_checker=checker,
+    )
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.post(
+            "/admin/api/run-full-triage",
+            headers={"Authorization": "Bearer expected-secret"},
+        )
+
+    events = [json.loads(line) for line in response.text.splitlines()]
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/x-ndjson")
+    assert [event["event"] for event in events] == [
+        "triage_start",
+        "page_start",
+        "viewport",
+        "page_result",
+        "page_start",
+        "viewport",
+        "page_result",
+        "triage_result",
+    ]
+    assert [event["page_id"] for event in events if event["event"] == "page_start"] == [
+        "home",
+        "contact",
+    ]
+    assert events[-1] == {
+        "event": "triage_result",
+        "classification": "healthy",
+        "pages_total": 2,
+        "pages_healthy": 2,
+        "pages_failed": 0,
+    }
+
+
+async def test_admin_full_triage_streams_enabled_site_crawl(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    payload = store.read()
+    payload["sites"][0]["pages"][0]["crawl"] = {
+        "enabled": True,
+        "max_pages": 25,
+        "max_depth": 2,
+    }
+    store.replace(payload)
+    app = create_app(
+        engine=StubEngine(),
+        webhook_token="expected-secret",
+        manifest_store=store,
+        page_checker=StubPageChecker(),
+        site_crawler=StubSiteCrawler(),
+    )
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.post(
+            "/admin/api/run-full-triage",
+            headers={"Authorization": "Bearer expected-secret"},
+        )
+
+    events = [json.loads(line) for line in response.text.splitlines()]
+    crawl_events = [event for event in events if event["event"].startswith("crawl_")]
+    assert crawl_events == [
+        {"event": "crawl_start", "page_id": "home", "max_pages": 25, "max_depth": 2},
+        {
+            "event": "crawl_page",
+            "page_id": "home",
+            "url": "https://example.com/",
+            "final_url": "https://example.com/",
+            "depth": 0,
+            "status_code": 200,
+            "healthy": True,
+            "error": None,
+        },
+        {
+            "event": "crawl_page",
+            "page_id": "home",
+            "url": "https://example.com/missing",
+            "final_url": "https://example.com/missing",
+            "depth": 1,
+            "status_code": 404,
+            "healthy": False,
+            "error": None,
+        },
+        {
+            "event": "crawl_result",
+            "page_id": "home",
+            "pages_checked": 2,
+            "pages_failed": 1,
+            "classification": "failed",
+        },
+    ]
+    assert events[-1]["classification"] == "failed"
+
+
+async def test_admin_full_triage_requires_authentication(tmp_path: Path) -> None:
+    app = create_app(
+        engine=StubEngine(),
+        webhook_token="expected-secret",
+        manifest_store=_store(tmp_path),
+        page_checker=StubPageChecker(),
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.post("/admin/api/run-full-triage")
+
+    assert response.status_code == 401
 
 
 async def test_admin_test_run_honours_ignored_console_errors(tmp_path: Path) -> None:

@@ -28,6 +28,18 @@ sites:
         critical_resource_patterns: []
         ignored_resource_patterns: []
         screenshot_masks: []
+        # Optional bounded same-site link crawl during a full triage run. The
+        # crawler only follows allowed_hosts, strips fragments, deduplicates
+        # normalized URLs, and validates every redirect before requesting it.
+        # crawl:
+        #   enabled: true
+        #   max_pages: 25     # 1-100
+        #   max_depth: 2      # 0-5; the configured page is depth 0
+        #   exclude_paths:    # path globs; query strings are not matched
+        #     - /wp-admin*
+        #     - /wp-login.php*
+        #     - /cart*
+        #     - /checkout*
         # Opt in only for shortcodes that should render on this page.
         application_shortcodes: []
         # Opt in only for plugin components that must render on this page.

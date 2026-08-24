@@ -66,6 +66,7 @@ def test_parses_valid_declarative_site_manifest() -> None:
 
     page = registry.page("home")
     assert page.url == "https://example.com/"
+    assert page.crawl.enabled is False
     assert [viewport.id for viewport in page.viewports] == ["desktop", "mobile"]
     assert page.required_selectors == ("main",)
     assert page.application_shortcodes == ("contact-form-7",)

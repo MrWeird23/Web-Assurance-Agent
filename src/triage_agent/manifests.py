@@ -143,6 +143,13 @@ class MaintenanceWindow(StrictManifestModel):
     end_time: str = Field(pattern=_TIME_PATTERN)
 
 
+class CrawlManifest(StrictManifestModel):
+    enabled: StrictBool = False
+    max_pages: StrictInt = Field(default=25, ge=1, le=100)
+    max_depth: StrictInt = Field(default=2, ge=0, le=5)
+    exclude_paths: tuple[NonEmptyText, ...] = Field(default=(), max_length=100)
+
+
 class PageManifest(StrictManifestModel):
     id: Identifier
     url: NonEmptyText
@@ -163,6 +170,7 @@ class PageManifest(StrictManifestModel):
     deep_check_interval_seconds: StrictInt | None = Field(default=None, ge=900, le=3600)
     kuma_monitor_id: StrictInt | None = Field(default=None, ge=1)
     maintenance_windows: tuple[MaintenanceWindow, ...] = Field(default=(), max_length=10)
+    crawl: CrawlManifest = Field(default_factory=CrawlManifest)
 
 
 class SiteManifest(StrictManifestModel):

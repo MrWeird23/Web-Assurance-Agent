@@ -15,6 +15,7 @@ from triage_agent.api import PageChecker, WordPressHealthChecker, create_app, ru
 from triage_agent.baselines import BaselineStore
 from triage_agent.browser_runner import PlaywrightBrowserRunner
 from triage_agent.classification import Incident, IncidentKind
+from triage_agent.crawler import SafeCrawlFetcher, SiteCrawler
 from triage_agent.discord import DiscordPublisher, DiscordPublishError
 from triage_agent.durable_registry import DurableIncidentRegistry
 from triage_agent.engine import Publisher, TriageEngine
@@ -188,4 +189,7 @@ def build_app(settings: Settings) -> FastAPI:
             url, allowed_hosts=allowed_hosts, client=client, resolver=resolve_addresses
         ),
         baseline_store=baseline_store,
+        site_crawler=SiteCrawler(
+            fetch=SafeCrawlFetcher(client=client, resolver=resolve_addresses)
+        ),
     )

@@ -3,7 +3,7 @@ import io
 import json
 import logging
 import secrets
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -23,6 +23,7 @@ from triage_agent.browser_checks import (
     classify_check,
     evaluate_browser_evidence,
 )
+from triage_agent.crawler import CrawlResult
 from triage_agent.discord import DiscordPublishError
 from triage_agent.manifest_store import ManifestStore
 from triage_agent.manifests import ManifestRegistry, PageManifest, ViewportManifest
@@ -54,6 +55,16 @@ class PageChecker(Protocol):
     ) -> BrowserEvidence: ...
 
 
+class SiteCrawler(Protocol):
+    def crawl(
+        self,
+        *,
+        start_url: str,
+        allowed_hosts: set[str],
+        config: Any,
+    ) -> AsyncIterator[CrawlResult]: ...
+
+
 class WordPressHealthChecker(Protocol):
     async def run(
         self,
@@ -78,6 +89,7 @@ def create_app(
     manifest_store: ManifestStore | None = None,
     admin_probe: AdminProbe | None = None,
     baseline_store: BaselineStore | None = None,
+    site_crawler: SiteCrawler | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="Web Assurance Agent",
@@ -193,6 +205,123 @@ def create_app(
                     wordpress_alert_publisher=wordpress_alert_publisher,
                 )
                 yield _ndjson({"event": "result", **result})
+
+            return StreamingResponse(events(), media_type="application/x-ndjson")
+
+        @app.post("/admin/api/run-full-triage", include_in_schema=False)
+        async def run_admin_full_triage(request: Request) -> StreamingResponse:
+            require_admin(request)
+            if page_checker is None:
+                raise HTTPException(status_code=503, detail="Page testing is not configured")
+            registry = manifest_store.registry
+            pages = registry.pages()
+
+            async def events() -> Any:
+                yield _ndjson({"event": "triage_start", "pages_total": len(pages)})
+                page_results: list[dict[str, Any]] = []
+                crawl_failures = 0
+                for page in pages:
+                    allowed_hosts = set(registry.allowed_hosts(page.id))
+                    site_id = registry.site_id(page.id)
+                    yield _ndjson(
+                        {"event": "page_start", "page_id": page.id, "site_id": site_id}
+                    )
+                    evidence: list[BrowserEvidence] = []
+                    for viewport in page.viewports:
+                        item = await page_checker.run(
+                            page=page, viewport=viewport, allowed_hosts=allowed_hosts
+                        )
+                        evidence.append(item)
+                        evaluation = evaluate_browser_evidence(
+                            item, ignore_console_errors=page.ignore_console_errors
+                        )
+                        yield _ndjson(
+                            {
+                                "event": "viewport",
+                                "page_id": page.id,
+                                "viewport_id": viewport.id,
+                                "status": "passed" if evaluation.healthy else "failed",
+                                "duration_ms": item.duration_ms,
+                                "failure_codes": sorted(
+                                    {finding.code for finding in evaluation.failures}
+                                ),
+                                "information_codes": sorted(
+                                    {finding.code for finding in evaluation.information}
+                                ),
+                                "console_errors": sorted(set(item.console_errors)),
+                            }
+                        )
+                    result = await _summarize_page_check(
+                        page=page,
+                        evidence=evidence,
+                        allowed_hosts=allowed_hosts,
+                        site_id=site_id,
+                        wordpress_health_checker=wordpress_health_checker,
+                        wordpress_alert_publisher=wordpress_alert_publisher,
+                    )
+                    page_results.append(result)
+                    yield _ndjson({"event": "page_result", **result})
+
+                    if page.crawl.enabled and site_crawler is not None:
+                        yield _ndjson(
+                            {
+                                "event": "crawl_start",
+                                "page_id": page.id,
+                                "max_pages": page.crawl.max_pages,
+                                "max_depth": page.crawl.max_depth,
+                            }
+                        )
+                        pages_checked = 0
+                        pages_failed = 0
+                        async for crawl_result in site_crawler.crawl(
+                            start_url=page.url,
+                            allowed_hosts=allowed_hosts,
+                            config=page.crawl,
+                        ):
+                            pages_checked += 1
+                            if not crawl_result.healthy:
+                                pages_failed += 1
+                            yield _ndjson(
+                                {
+                                    "event": "crawl_page",
+                                    "page_id": page.id,
+                                    "url": crawl_result.url,
+                                    "final_url": crawl_result.final_url,
+                                    "depth": crawl_result.depth,
+                                    "status_code": crawl_result.status_code,
+                                    "healthy": crawl_result.healthy,
+                                    "error": crawl_result.error,
+                                }
+                            )
+                        crawl_failures += pages_failed
+                        yield _ndjson(
+                            {
+                                "event": "crawl_result",
+                                "page_id": page.id,
+                                "pages_checked": pages_checked,
+                                "pages_failed": pages_failed,
+                                "classification": (
+                                    "healthy" if pages_failed == 0 else "failed"
+                                ),
+                            }
+                        )
+
+                healthy = sum(
+                    result["classification"] == "healthy" for result in page_results
+                )
+                yield _ndjson(
+                    {
+                        "event": "triage_result",
+                        "classification": (
+                            "healthy"
+                            if healthy == len(page_results) and crawl_failures == 0
+                            else "failed"
+                        ),
+                        "pages_total": len(page_results),
+                        "pages_healthy": healthy,
+                        "pages_failed": len(page_results) - healthy,
+                    }
+                )
 
             return StreamingResponse(events(), media_type="application/x-ndjson")
 

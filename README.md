@@ -299,9 +299,16 @@ restart is required because scheduler jobs and runtime checkers are constructed
 from the manifest at startup.
 
 The initial console edits the primary page for each site, including required
-text and selectors, forbidden text, ignored resources, check intervals, and the
-explicit known-console-noise policy. Advanced manifest fields remain preserved
-when that page is edited.
+text and selectors, forbidden text, ignored resources, check intervals, the
+explicit known-console-noise policy, and an optional bounded same-site crawl.
+Advanced manifest fields remain preserved when that page is edited.
+
+The crawl runs only as part of **Run full triage**. It follows links whose hosts
+are present in the site's `allowed_hosts`, validates DNS and every redirect,
+strips fragments, normalizes query ordering, and emits progress for each URL.
+Use `max_pages` and `max_depth` to bound work, and `exclude_paths` path globs to
+skip administrative, authentication, cart, checkout, or other stateful routes.
+Any failed crawled URL contributes to the full-triage failure classification.
 | `TRIAGE_SCHEDULER_GLOBAL_CONCURRENCY` | No | `2` | Maximum simultaneous scheduled (fast/deep) checks across all sites, from 1 to 8 |
 | `TRIAGE_SCHEDULER_SITE_CONCURRENCY` | No | `1` | Maximum simultaneous scheduled checks per site, from 1 to 4 |
 | `LOG_LEVEL` | No | `INFO` | Runtime log level |

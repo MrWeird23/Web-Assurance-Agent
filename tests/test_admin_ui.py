@@ -70,12 +70,21 @@ async def test_admin_shell_is_available_without_exposing_manifest(tmp_path: Path
     assert "required_text: [Welcome]" not in response.text
     assert "Test link" in response.text
     assert "Run tests" in response.text
+    assert "Run full triage" in response.text
+    assert "/admin/api/run-full-triage" in response.text
     assert "Reference screenshots" in response.text
     assert "Capture reference" in response.text
     assert "Approve reference" in response.text
     assert 'id="baselinePreview"' in response.text
     assert 'role="dialog"' in response.text
     assert 'aria-live="polite"' in response.text
+    assert 'id="crawlEnabled"' in response.text
+    assert 'id="crawlMaxPages"' in response.text
+    assert 'id="crawlMaxDepth"' in response.text
+    assert 'id="crawlExclude"' in response.text
+    assert "e.event==='crawl_start'" in response.text
+    assert "e.event==='crawl_page'" in response.text
+    assert "e.event==='crawl_result'" in response.text
 
 
 async def test_admin_manifest_api_requires_authentication(tmp_path: Path) -> None:
