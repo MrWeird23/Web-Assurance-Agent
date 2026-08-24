@@ -53,6 +53,15 @@ class TriageEngine:
         self._on_publish = on_publish
         self._monitor_locks: dict[int, asyncio.Lock] = {}
 
+    def set_confirmation(self, attempts: int, delay_seconds: float) -> None:
+        """Live-update confirmation tuning (e.g. after an admin settings save)."""
+        if attempts < 1:
+            raise ValueError("confirmation_attempts must be at least 1")
+        if delay_seconds < 0:
+            raise ValueError("confirmation_delay_seconds cannot be negative")
+        self._confirmation_attempts = attempts
+        self._confirmation_delay_seconds = delay_seconds
+
     async def handle(self, payload: dict[str, Any]) -> TriageOutcome:
         return await self.handle_event(parse_kuma_event(payload))
 

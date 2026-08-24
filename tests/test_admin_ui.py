@@ -5,6 +5,7 @@ import httpx
 
 from triage_agent.api import create_app
 from triage_agent.manifest_store import ManifestStore
+from triage_agent.settings_store import RuntimeSettings, SettingsStore
 
 MANIFEST = """\
 version: 1
@@ -85,6 +86,11 @@ async def test_admin_shell_is_available_without_exposing_manifest(tmp_path: Path
     assert "e.event==='crawl_start'" in response.text
     assert "e.event==='crawl_page'" in response.text
     assert "e.event==='crawl_result'" in response.text
+    assert 'id="openSettings"' in response.text
+    assert 'id="settingsModal"' in response.text
+    assert 'id="discordWebhook"' in response.text
+    assert 'id="logLevel"' in response.text
+    assert "/admin/api/settings" in response.text
 
 
 async def test_admin_manifest_api_requires_authentication(tmp_path: Path) -> None:
@@ -186,6 +192,117 @@ async def test_admin_rejects_hosts_outside_runtime_allowlist_without_writing(
     assert response.status_code == 422
     assert "TRIAGE_ALLOWED_HOSTS" in response.json()["detail"]
     assert path.read_bytes() == original
+
+
+async def test_admin_settings_api_requires_authentication(tmp_path: Path) -> None:
+    path = tmp_path / "sites.yaml"
+    path.write_text(MANIFEST, encoding="utf-8")
+    app = create_app(
+        engine=StubEngine(),
+        webhook_token="expected-secret",
+        manifest_store=ManifestStore(path, permitted_hosts={"example.com"}),
+        settings_store=SettingsStore(tmp_path / "settings.yaml", defaults=RuntimeSettings()),
+    )
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.get("/admin/api/settings")
+
+    assert response.status_code == 401
+
+
+async def test_admin_can_read_and_replace_settings(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "sites.yaml"
+    manifest_path.write_text(MANIFEST, encoding="utf-8")
+    settings_store = SettingsStore(tmp_path / "settings.yaml", defaults=RuntimeSettings())
+    app = create_app(
+        engine=StubEngine(),
+        webhook_token="expected-secret",
+        manifest_store=ManifestStore(manifest_path, permitted_hosts={"example.com"}),
+        settings_store=settings_store,
+    )
+    headers = {"Authorization": "Bearer expected-secret"}
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        before = await client.get("/admin/api/settings", headers=headers)
+        saved = await client.put(
+            "/admin/api/settings",
+            headers=headers,
+            json={"confirmation_attempts": 4, "log_level": "warning"},
+        )
+        after = await client.get("/admin/api/settings", headers=headers)
+
+    assert before.json()["confirmation_attempts"] == 2
+    assert saved.status_code == 200
+    # No apply hook configured -> can't confirm anything applied live.
+    assert saved.json() == {"status": "saved", "restart_required": True}
+    assert after.json()["confirmation_attempts"] == 4
+    assert after.json()["log_level"] == "WARNING"
+    assert "confirmation_attempts: 4" in (tmp_path / "settings.yaml").read_text(
+        encoding="utf-8"
+    )
+
+
+async def test_admin_settings_save_calls_apply_hook_and_reports_its_restart_verdict(
+    tmp_path: Path,
+) -> None:
+    manifest_path = tmp_path / "sites.yaml"
+    manifest_path.write_text(MANIFEST, encoding="utf-8")
+    settings_store = SettingsStore(tmp_path / "settings.yaml", defaults=RuntimeSettings())
+    calls = []
+
+    async def apply_settings(previous: RuntimeSettings, new: RuntimeSettings) -> bool:
+        calls.append((previous, new))
+        return False
+
+    app = create_app(
+        engine=StubEngine(),
+        webhook_token="expected-secret",
+        manifest_store=ManifestStore(manifest_path, permitted_hosts={"example.com"}),
+        settings_store=settings_store,
+        admin_apply_settings=apply_settings,
+    )
+    headers = {"Authorization": "Bearer expected-secret"}
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        saved = await client.put(
+            "/admin/api/settings", headers=headers, json={"confirmation_attempts": 3}
+        )
+
+    assert saved.status_code == 200
+    assert saved.json() == {"status": "saved", "restart_required": False}
+    assert len(calls) == 1
+    assert calls[0][0].confirmation_attempts == 2
+    assert calls[0][1].confirmation_attempts == 3
+
+
+async def test_admin_rejects_invalid_settings_without_writing(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "sites.yaml"
+    manifest_path.write_text(MANIFEST, encoding="utf-8")
+    settings_store = SettingsStore(tmp_path / "settings.yaml", defaults=RuntimeSettings())
+    app = create_app(
+        engine=StubEngine(),
+        webhook_token="expected-secret",
+        manifest_store=ManifestStore(manifest_path, permitted_hosts={"example.com"}),
+        settings_store=settings_store,
+    )
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.put(
+            "/admin/api/settings",
+            headers={"Authorization": "Bearer expected-secret"},
+            json={"confirmation_attempts": 99},
+        )
+
+    assert response.status_code == 422
+    assert not (tmp_path / "settings.yaml").exists()
 
 
 async def test_admin_rejects_oversized_payload_before_json_parsing(tmp_path: Path) -> None:

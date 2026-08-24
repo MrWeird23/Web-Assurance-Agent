@@ -71,6 +71,40 @@ async def test_runtime_registers_manual_check_when_manifest_is_configured(
     assert "/checks/pages/{page_id}" in paths
 
 
+async def test_runtime_applies_persisted_settings_yaml_over_env_defaults(
+    tmp_path: Path,
+) -> None:
+    manifest_path = tmp_path / "sites.yaml"
+    manifest_path.write_text(MANIFEST, encoding="utf-8")
+    (tmp_path / "settings.yaml").write_text(
+        "confirmation_attempts: 4\nlog_level: WARNING\n", encoding="utf-8"
+    )
+    settings = Settings(
+        webhook_token="a-secure-random-token",
+        allowed_hosts=frozenset({"example.com"}),
+        discord_webhook_url=None,
+        confirmation_attempts=2,
+        confirmation_delay_seconds=0,
+        request_timeout_seconds=5,
+        site_manifest_path=manifest_path,
+        browser_artifact_directory=tmp_path / "artifacts",
+        visual_baseline_directory=tmp_path / "baselines",
+        settings_path=tmp_path / "settings.yaml",
+    )
+
+    app = build_app(settings)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.get(
+            "/admin/api/settings", headers={"Authorization": "Bearer a-secure-random-token"}
+        )
+
+    assert response.json()["confirmation_attempts"] == 4
+    assert response.json()["log_level"] == "WARNING"
+
+
 async def test_runtime_factory_reads_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TRIAGE_WEBHOOK_TOKEN", "a-secure-random-token")
     monkeypatch.setenv("TRIAGE_ALLOWED_HOSTS", "example.com")

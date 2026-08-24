@@ -16,7 +16,7 @@ from triage_agent.baselines import BaselineStore
 from triage_agent.browser_runner import PlaywrightBrowserRunner
 from triage_agent.classification import Incident, IncidentKind
 from triage_agent.crawler import SafeCrawlFetcher, SiteCrawler, suggest_page
-from triage_agent.discord import DiscordPublisher, DiscordPublishError
+from triage_agent.discord import DiscordPublishError, validate_discord_webhook_url
 from triage_agent.durable_registry import DurableIncidentRegistry
 from triage_agent.engine import Publisher, TriageEngine
 from triage_agent.events import EventState, KumaEvent
@@ -30,6 +30,7 @@ from triage_agent.probes import ProbeResult, probe_url, resolve_addresses
 from triage_agent.reporting import render_browser_check_discord_payload
 from triage_agent.scheduler import CheckScheduler
 from triage_agent.settings import Settings
+from triage_agent.settings_store import RuntimeSettings, SettingsStore
 from triage_agent.visual_page_checker import VisualPageChecker
 from triage_agent.wordpress_runtime import EnvironmentSecretLoader, WordPressRuntimeChecker
 
@@ -37,7 +38,32 @@ logger = logging.getLogger(__name__)
 
 
 def build_app(settings: Settings) -> FastAPI:
-    client = httpx.AsyncClient(timeout=settings.request_timeout_seconds)
+    # Env vars remain the defaults; config/settings.yaml (admin-editable, next
+    # to sites.yaml) overrides them once it exists, same precedence as the
+    # site manifest.
+    env_settings = RuntimeSettings(
+        discord_webhook_url=settings.discord_webhook_url,
+        confirmation_attempts=settings.confirmation_attempts,
+        confirmation_delay_seconds=settings.confirmation_delay_seconds,
+        request_timeout_seconds=settings.request_timeout_seconds,
+        manual_check_concurrency=settings.manual_check_concurrency,
+        scheduler_global_concurrency=settings.scheduler_global_concurrency,
+        scheduler_site_concurrency=settings.scheduler_site_concurrency,
+        log_level=os.environ.get("LOG_LEVEL", "INFO"),
+    )
+    if env_settings.discord_webhook_url is not None:
+        validate_discord_webhook_url(env_settings.discord_webhook_url)
+    settings_store: SettingsStore | None = (
+        SettingsStore(settings.settings_path, defaults=env_settings)
+        if settings.settings_path is not None
+        else None
+    )
+
+    def current_settings() -> RuntimeSettings:
+        return settings_store.settings if settings_store is not None else env_settings
+
+    logging.getLogger().setLevel(current_settings().log_level)
+    client = httpx.AsyncClient(timeout=current_settings().request_timeout_seconds)
 
     async def probe(url: str) -> ProbeResult:
         return await probe_url(
@@ -47,15 +73,18 @@ def build_app(settings: Settings) -> FastAPI:
             resolver=resolve_addresses,
         )
 
-    publisher: Publisher
-    if settings.discord_webhook_url:
-        publisher = DiscordPublisher(webhook_url=settings.discord_webhook_url, client=client)
-    else:
-
-        async def dry_run_publish(payload: dict[str, Any]) -> None:
+    async def publish(payload: dict[str, Any]) -> None:
+        url = current_settings().discord_webhook_url
+        if not url:
             logger.info("dry_run_discord_payload=%s", json.dumps(payload, sort_keys=True))
+            return
+        try:
+            response = await client.post(url, json=payload)
+            response.raise_for_status()
+        except httpx.HTTPError:
+            raise DiscordPublishError("Discord webhook delivery failed") from None
 
-        publisher = dry_run_publish
+    publisher: Publisher = publish
 
     manifest_registry: ManifestRegistry | None = None
     manifest_store: ManifestStore | None = None
@@ -76,8 +105,8 @@ def build_app(settings: Settings) -> FastAPI:
     engine = TriageEngine(
         probe=probe,
         publish=publisher,
-        confirmation_attempts=settings.confirmation_attempts,
-        confirmation_delay_seconds=settings.confirmation_delay_seconds,
+        confirmation_attempts=current_settings().confirmation_attempts,
+        confirmation_delay_seconds=current_settings().confirmation_delay_seconds,
         registry=registry,
         on_publish=on_publish,
     )
@@ -162,16 +191,17 @@ def build_app(settings: Settings) -> FastAPI:
             manifest_registry=manifest_registry,
             run_fast_check=run_fast_check,
             run_deep_check=run_deep_check,
-            global_concurrency=settings.scheduler_global_concurrency,
-            site_concurrency=settings.scheduler_site_concurrency,
+            global_concurrency=current_settings().scheduler_global_concurrency,
+            site_concurrency=current_settings().scheduler_site_concurrency,
         )
 
         async def reload_scheduler_impl() -> None:
-            # Admin manifest save calls this so a new/changed site's fast/deep
-            # checks start immediately -- no container restart needed. The
-            # scheduler snapshots its page loops at construction, so a live
-            # edit means: stop the old loop set, rebuild from the just-saved
-            # registry, start a new one.
+            # Admin manifest *or settings* save calls this so a new/changed
+            # site's fast/deep checks -- or a new concurrency setting --
+            # apply immediately, no container restart needed. The scheduler
+            # snapshots its page loops (and concurrency) at construction, so
+            # a live edit means: stop the old loop set, rebuild, start a new
+            # one.
             nonlocal manifest_registry, scheduler, scheduler_task
             assert manifest_store is not None
             if scheduler_task is not None:
@@ -183,12 +213,24 @@ def build_app(settings: Settings) -> FastAPI:
                 manifest_registry=manifest_registry,
                 run_fast_check=run_fast_check,
                 run_deep_check=run_deep_check,
-                global_concurrency=settings.scheduler_global_concurrency,
-                site_concurrency=settings.scheduler_site_concurrency,
+                global_concurrency=current_settings().scheduler_global_concurrency,
+                site_concurrency=current_settings().scheduler_site_concurrency,
             )
             scheduler_task = asyncio.create_task(scheduler.run_forever())
 
         reload_scheduler = reload_scheduler_impl
+
+    async def apply_settings(previous: RuntimeSettings, new: RuntimeSettings) -> bool:
+        # Admin settings save calls this. Log level and confirmation tuning
+        # apply in place; concurrency rides the scheduler reload above.
+        # Timeout/manual-check-concurrency are baked into the httpx client
+        # and a fixed-size queue at startup, so those two still need a
+        # restart -- reported back to the admin UI, not silently dropped.
+        logging.getLogger().setLevel(new.log_level)
+        engine.set_confirmation(new.confirmation_attempts, new.confirmation_delay_seconds)
+        if reload_scheduler is not None:
+            await reload_scheduler()
+        return new.restart_required_vs(previous)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -212,9 +254,11 @@ def build_app(settings: Settings) -> FastAPI:
         page_checker=page_checker,
         wordpress_health_checker=wordpress_health_checker,
         wordpress_alert_publisher=publisher,
-        manual_check_concurrency=settings.manual_check_concurrency,
+        manual_check_concurrency=current_settings().manual_check_concurrency,
         manifest_store=manifest_store,
         admin_reload_scheduler=reload_scheduler,
+        settings_store=settings_store,
+        admin_apply_settings=apply_settings if settings_store is not None else None,
         admin_probe=lambda url, allowed_hosts: probe_url(
             url, allowed_hosts=allowed_hosts, client=client, resolver=resolve_addresses
         ),

@@ -29,6 +29,7 @@ from triage_agent.discord import DiscordPublishError
 from triage_agent.manifest_store import ManifestStore
 from triage_agent.manifests import ManifestRegistry, PageManifest, ViewportManifest
 from triage_agent.probes import ProbeResult
+from triage_agent.settings_store import RuntimeSettings, SettingsStore
 from triage_agent.wordpress_health import WordPressHealthResult
 from triage_agent.wordpress_reporting import (
     render_wordpress_health_discord_payload,
@@ -41,6 +42,7 @@ AlertPublisher = Callable[[dict[str, Any]], Awaitable[None]]
 AdminProbe = Callable[[str, set[str]], Awaitable[ProbeResult]]
 AdminSuggest = Callable[[str, set[str]], Awaitable[PageSuggestion]]
 AdminReload = Callable[[], Awaitable[None]]
+AdminApplySettings = Callable[[RuntimeSettings, RuntimeSettings], Awaitable[bool]]
 logger = logging.getLogger(__name__)
 
 
@@ -93,6 +95,8 @@ def create_app(
     admin_probe: AdminProbe | None = None,
     admin_suggest: AdminSuggest | None = None,
     admin_reload_scheduler: AdminReload | None = None,
+    settings_store: SettingsStore | None = None,
+    admin_apply_settings: AdminApplySettings | None = None,
     baseline_store: BaselineStore | None = None,
     site_crawler: SiteCrawler | None = None,
 ) -> FastAPI:
@@ -160,6 +164,32 @@ def create_app(
                 await admin_reload_scheduler()
                 return {"status": "saved", "restart_required": False}
             return {"status": "saved", "restart_required": True}
+
+        if settings_store is not None:
+
+            @app.get("/admin/api/settings", include_in_schema=False)
+            async def read_admin_settings(request: Request) -> dict[str, Any]:
+                require_admin(request)
+                return settings_store.settings.as_dict()
+
+            @app.put("/admin/api/settings", include_in_schema=False)
+            async def replace_admin_settings(request: Request) -> dict[str, Any]:
+                require_admin(request)
+                payload = await _read_json_object(request)
+                previous = settings_store.settings
+                try:
+                    new_settings = settings_store.replace(payload)
+                except ValueError as exc:
+                    raise HTTPException(status_code=422, detail=str(exc)) from exc
+                except OSError as exc:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Unable to write settings: {exc}",
+                    ) from exc
+                restart_required = True
+                if admin_apply_settings is not None:
+                    restart_required = await admin_apply_settings(previous, new_settings)
+                return {"status": "saved", "restart_required": restart_required}
 
         @app.post("/admin/api/pages/{page_id}/test-link", include_in_schema=False)
         async def test_admin_link(page_id: str, request: Request) -> dict[str, Any]:

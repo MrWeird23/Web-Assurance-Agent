@@ -18,6 +18,7 @@ class Settings:
     state_database_path: Path | None = None
     scheduler_global_concurrency: int = 2
     scheduler_site_concurrency: int = 1
+    settings_path: Path | None = None
 
     @classmethod
     def from_mapping(cls, values: Mapping[str, str]) -> "Settings":
@@ -56,6 +57,9 @@ class Settings:
         scheduler_site_concurrency = int(values.get("TRIAGE_SCHEDULER_SITE_CONCURRENCY", "1"))
         if not 1 <= scheduler_site_concurrency <= 4:
             raise ValueError("TRIAGE_SCHEDULER_SITE_CONCURRENCY must be between 1 and 4")
+        # config/settings.yaml lives alongside sites.yaml -- same writable,
+        # already-mounted directory, no extra env var or compose change needed.
+        settings_path = Path(manifest_path).parent / "settings.yaml" if manifest_path else None
         return cls(
             webhook_token=token,
             allowed_hosts=hosts,
@@ -70,4 +74,5 @@ class Settings:
             state_database_path=Path(state_database_path) if state_database_path else None,
             scheduler_global_concurrency=scheduler_global_concurrency,
             scheduler_site_concurrency=scheduler_site_concurrency,
+            settings_path=settings_path,
         )

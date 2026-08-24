@@ -30,6 +30,7 @@ def test_settings_parse_safe_runtime_environment() -> None:
     assert settings.visual_baseline_directory == Path("/var/lib/triage/baselines")
     assert settings.manual_check_concurrency == 2
     assert settings.state_database_path == Path("/var/lib/triage/state/state.sqlite3")
+    assert settings.settings_path == Path("/run/config/settings.yaml")
 
 
 def test_settings_leave_browser_checks_disabled_without_manifest_path() -> None:
@@ -45,6 +46,7 @@ def test_settings_leave_browser_checks_disabled_without_manifest_path() -> None:
     assert settings.visual_baseline_directory is None
     assert settings.manual_check_concurrency == 1
     assert settings.state_database_path is None
+    assert settings.settings_path is None
 
 
 def test_settings_reject_invalid_manual_check_concurrency() -> None:

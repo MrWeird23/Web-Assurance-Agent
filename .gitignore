@@ -10,4 +10,5 @@ config/sites.yaml
 data/state/
 data/baselines/pending/
 .hermes/
+.serena/
 .DS_Store

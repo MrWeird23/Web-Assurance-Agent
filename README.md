@@ -178,6 +178,10 @@ small management console at `/admin`.
   process restart is required.
 - Use **Run check** on a page to execute the existing manual browser check and
   inspect its classification, confidence, findings, and next action.
+- The **Settings** button opens the Discord webhook, confirmation/timeout
+  tuning, concurrency limit, and log level controls -- see
+  [Runtime settings (admin UI)](#runtime-settings-admin-ui) below. `TRIAGE_WEBHOOK_TOKEN` and
+  `TRIAGE_ALLOWED_HOSTS` are deliberately not editable there.
 
 The starter pilot and ownership notes are recorded in
 [`docs/pilot-inventory.md`](docs/pilot-inventory.md). Browser assertions in
@@ -276,6 +280,14 @@ A production deployment should place the service behind an approved TLS reverse 
 
 ## Configuration
 
+Most of these are startup defaults only: once `TRIAGE_SITE_MANIFEST_PATH` is
+set, the Discord webhook URL, confirmation/timeout tuning, concurrency limits,
+and log level can all be changed at runtime from the admin UI's **Settings**
+panel instead of editing `.env` and restarting -- see
+[Runtime settings (admin UI)](#runtime-settings-admin-ui) below.
+`TRIAGE_WEBHOOK_TOKEN` and `TRIAGE_ALLOWED_HOSTS` are the exceptions: they stay
+`.env`-only, since they gate the admin API itself and the SSRF host allowlist.
+
 | Variable | Required | Default | Purpose |
 |---|---:|---:|---|
 | `TRIAGE_WEBHOOK_TOKEN` | Yes | — | Shared secret sent as `X-Triage-Token`; at least 16 characters |
@@ -289,6 +301,25 @@ A production deployment should place the service behind an approved TLS reverse 
 | `TRIAGE_VISUAL_BASELINE_DIRECTORY` | No | empty | Directory containing separately stored human-approved visual baselines |
 | `TRIAGE_MANUAL_CHECK_CONCURRENCY` | No | `1` | Maximum simultaneous manual browser checks per service process, from 1 to 4; excess requests receive HTTP 429 |
 | `TRIAGE_STATE_DATABASE_PATH` | No | empty | SQLite file for durable incident/publication state; unset keeps state in memory only (lost on restart, unsafe for multiple workers) |
+
+### Runtime settings (admin UI)
+
+When `TRIAGE_SITE_MANIFEST_PATH` is configured, `/admin`'s **Settings** button
+opens a form for the Discord webhook URL, confirmation attempts/delay,
+request timeout, manual-check and scheduler concurrency limits, and log
+level. Saving writes `config/settings.yaml` (next to `sites.yaml`, in the
+same writable directory -- no extra volume mount needed) and applies most of
+it immediately:
+
+- Discord webhook URL, confirmation attempts/delay, scheduler concurrency,
+  and log level take effect on save, no restart.
+- Request timeout and manual-check concurrency are baked into the HTTP
+  client and a fixed-size queue at process startup, so those two still need
+  a restart; the save response says so.
+
+`config/settings.yaml` is optional -- until a save happens, the `.env`
+defaults above apply. `TRIAGE_WEBHOOK_TOKEN` and `TRIAGE_ALLOWED_HOSTS` are
+not part of this file and cannot be changed here.
 
 ### Site configuration console
 
