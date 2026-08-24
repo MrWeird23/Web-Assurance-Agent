@@ -11,7 +11,7 @@ from PIL import Image
 from triage_agent.api import create_app
 from triage_agent.baselines import BaselineStore
 from triage_agent.browser_checks import BrowserEvidence, ScreenshotArtifact, Viewport
-from triage_agent.crawler import CrawlResult
+from triage_agent.crawler import CrawlResult, PageSuggestion
 from triage_agent.manifest_store import ManifestStore
 from triage_agent.manifests import CrawlManifest, PageManifest, ViewportManifest
 from triage_agent.probes import ProbeResult
@@ -98,6 +98,36 @@ def _store(tmp_path: Path) -> ManifestStore:
     return ManifestStore(path, permitted_hosts={"example.com"})
 
 
+def test_wildcard_permitted_host_covers_apex_and_subdomains(tmp_path: Path) -> None:
+    path = tmp_path / "sites.yaml"
+    path.write_text(MANIFEST.replace("example.com", "sub.example.com"), encoding="utf-8")
+
+    store = ManifestStore(path, permitted_hosts={"*.example.com"})
+
+    assert list(store.registry.manifest.sites[0].allowed_hosts) == ["sub.example.com"]
+
+
+def test_star_permitted_hosts_allows_any_domain(tmp_path: Path) -> None:
+    path = tmp_path / "sites.yaml"
+    path.write_text(MANIFEST.replace("example.com", "anything-goes.net"), encoding="utf-8")
+
+    store = ManifestStore(path, permitted_hosts={"*"})
+
+    assert list(store.registry.manifest.sites[0].allowed_hosts) == ["anything-goes.net"]
+
+
+def test_wildcard_permitted_host_still_rejects_other_domains(tmp_path: Path) -> None:
+    path = tmp_path / "sites.yaml"
+    path.write_text(MANIFEST.replace("example.com", "not-approved.net"), encoding="utf-8")
+
+    try:
+        ManifestStore(path, permitted_hosts={"*.example.com"})
+    except ValueError as exc:
+        assert "TRIAGE_ALLOWED_HOSTS" in str(exc)
+    else:
+        raise AssertionError("expected ManifestStore to reject an unapproved host")
+
+
 def _png() -> bytes:
     output = BytesIO()
     Image.new("RGB", (20, 20), "white").save(output, format="PNG")
@@ -132,6 +162,58 @@ async def test_admin_can_test_a_configured_link(tmp_path: Path) -> None:
         "final_url": "https://example.com/",
         "error": None,
     }
+
+
+async def test_admin_can_suggest_page_config_from_a_url(tmp_path: Path) -> None:
+    async def suggest(url: str, allowed_hosts: set[str]) -> PageSuggestion:
+        assert url == "https://example.com/about"
+        assert allowed_hosts == {"example.com"}
+        return PageSuggestion(ok=True, title="About us", has_main=True, error=None)
+
+    app = create_app(
+        engine=StubEngine(),
+        webhook_token="expected-secret",
+        manifest_store=_store(tmp_path),
+        admin_suggest=suggest,
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.post(
+            "/admin/api/suggest-page",
+            headers={"Authorization": "Bearer expected-secret"},
+            json={"url": "https://example.com/about"},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "title": "About us",
+        "has_main": True,
+        "error": None,
+    }
+
+
+async def test_admin_suggest_page_requires_a_url(tmp_path: Path) -> None:
+    async def suggest(url: str, allowed_hosts: set[str]) -> PageSuggestion:
+        raise AssertionError("should not be called without a url")
+
+    app = create_app(
+        engine=StubEngine(),
+        webhook_token="expected-secret",
+        manifest_store=_store(tmp_path),
+        admin_suggest=suggest,
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.post(
+            "/admin/api/suggest-page",
+            headers={"Authorization": "Bearer expected-secret"},
+            json={},
+        )
+
+    assert response.status_code == 422
 
 
 async def test_admin_runs_page_tests_as_streamed_ndjson(tmp_path: Path) -> None:

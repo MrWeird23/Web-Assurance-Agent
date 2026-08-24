@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,7 +15,7 @@ from triage_agent.api import PageChecker, WordPressHealthChecker, create_app, ru
 from triage_agent.baselines import BaselineStore
 from triage_agent.browser_runner import PlaywrightBrowserRunner
 from triage_agent.classification import Incident, IncidentKind
-from triage_agent.crawler import SafeCrawlFetcher, SiteCrawler
+from triage_agent.crawler import SafeCrawlFetcher, SiteCrawler, suggest_page
 from triage_agent.discord import DiscordPublisher, DiscordPublishError
 from triage_agent.durable_registry import DurableIncidentRegistry
 from triage_agent.engine import Publisher, TriageEngine
@@ -60,6 +60,8 @@ def build_app(settings: Settings) -> FastAPI:
     manifest_registry: ManifestRegistry | None = None
     manifest_store: ManifestStore | None = None
     scheduler: CheckScheduler | None = None
+    scheduler_task: asyncio.Task[None] | None = None
+    reload_scheduler: Callable[[], Awaitable[None]] | None = None
 
     async def on_publish(event: KumaEvent, incident: Incident) -> None:
         if scheduler is None or manifest_registry is None:
@@ -164,8 +166,33 @@ def build_app(settings: Settings) -> FastAPI:
             site_concurrency=settings.scheduler_site_concurrency,
         )
 
+        async def reload_scheduler_impl() -> None:
+            # Admin manifest save calls this so a new/changed site's fast/deep
+            # checks start immediately -- no container restart needed. The
+            # scheduler snapshots its page loops at construction, so a live
+            # edit means: stop the old loop set, rebuild from the just-saved
+            # registry, start a new one.
+            nonlocal manifest_registry, scheduler, scheduler_task
+            assert manifest_store is not None
+            if scheduler_task is not None:
+                scheduler_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await scheduler_task
+            manifest_registry = manifest_store.registry
+            scheduler = CheckScheduler(
+                manifest_registry=manifest_registry,
+                run_fast_check=run_fast_check,
+                run_deep_check=run_deep_check,
+                global_concurrency=settings.scheduler_global_concurrency,
+                site_concurrency=settings.scheduler_site_concurrency,
+            )
+            scheduler_task = asyncio.create_task(scheduler.run_forever())
+
+        reload_scheduler = reload_scheduler_impl
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        nonlocal scheduler_task
         scheduler_task = asyncio.create_task(scheduler.run_forever()) if scheduler else None
         yield
         if scheduler_task is not None:
@@ -174,6 +201,8 @@ def build_app(settings: Settings) -> FastAPI:
                 await scheduler_task
         await client.aclose()
         registry.close()
+
+    crawl_fetcher = SafeCrawlFetcher(client=client, resolver=resolve_addresses)
 
     return create_app(
         engine=engine,
@@ -185,11 +214,13 @@ def build_app(settings: Settings) -> FastAPI:
         wordpress_alert_publisher=publisher,
         manual_check_concurrency=settings.manual_check_concurrency,
         manifest_store=manifest_store,
+        admin_reload_scheduler=reload_scheduler,
         admin_probe=lambda url, allowed_hosts: probe_url(
             url, allowed_hosts=allowed_hosts, client=client, resolver=resolve_addresses
         ),
-        baseline_store=baseline_store,
-        site_crawler=SiteCrawler(
-            fetch=SafeCrawlFetcher(client=client, resolver=resolve_addresses)
+        admin_suggest=lambda url, allowed_hosts: suggest_page(
+            url, allowed_hosts=allowed_hosts, fetch=crawl_fetcher
         ),
+        baseline_store=baseline_store,
+        site_crawler=SiteCrawler(fetch=crawl_fetcher),
     )

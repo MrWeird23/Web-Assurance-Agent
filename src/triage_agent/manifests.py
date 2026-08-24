@@ -276,7 +276,10 @@ def parse_site_manifest(text: str) -> ManifestRegistry:
             for page in site.pages:
                 validate_probe_url(page.url, allowed_hosts=allowed_hosts)
     except UnsafeTargetError as exc:
-        raise ValueError("Invalid site manifest: unsafe page URL") from exc
+        raise ValueError(
+            f"Invalid site manifest: unsafe page URL {page.url!r} "
+            f"(must be https:// and its host must be in that site's allowed_hosts)"
+        ) from exc
 
     page_list = [page for site in manifest.sites for page in site.pages]
     for page in page_list:

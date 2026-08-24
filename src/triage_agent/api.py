@@ -8,6 +8,7 @@ from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
@@ -23,7 +24,7 @@ from triage_agent.browser_checks import (
     classify_check,
     evaluate_browser_evidence,
 )
-from triage_agent.crawler import CrawlResult
+from triage_agent.crawler import CrawlResult, PageSuggestion
 from triage_agent.discord import DiscordPublishError
 from triage_agent.manifest_store import ManifestStore
 from triage_agent.manifests import ManifestRegistry, PageManifest, ViewportManifest
@@ -38,6 +39,8 @@ MAX_WEBHOOK_BODY_BYTES = 65_536
 MAX_ADMIN_BODY_BYTES = 1_048_576
 AlertPublisher = Callable[[dict[str, Any]], Awaitable[None]]
 AdminProbe = Callable[[str, set[str]], Awaitable[ProbeResult]]
+AdminSuggest = Callable[[str, set[str]], Awaitable[PageSuggestion]]
+AdminReload = Callable[[], Awaitable[None]]
 logger = logging.getLogger(__name__)
 
 
@@ -88,6 +91,8 @@ def create_app(
     manual_check_concurrency: int = 1,
     manifest_store: ManifestStore | None = None,
     admin_probe: AdminProbe | None = None,
+    admin_suggest: AdminSuggest | None = None,
+    admin_reload_scheduler: AdminReload | None = None,
     baseline_store: BaselineStore | None = None,
     site_crawler: SiteCrawler | None = None,
 ) -> FastAPI:
@@ -146,6 +151,14 @@ def create_app(
                 manifest_store.replace(payload)
             except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
+            except OSError as exc:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Unable to write site manifest: {exc}",
+                ) from exc
+            if admin_reload_scheduler is not None:
+                await admin_reload_scheduler()
+                return {"status": "saved", "restart_required": False}
             return {"status": "saved", "restart_required": True}
 
         @app.post("/admin/api/pages/{page_id}/test-link", include_in_schema=False)
@@ -160,6 +173,26 @@ def create_app(
                 "status_code": result.status_code,
                 "latency_ms": result.latency_ms,
                 "final_url": result.final_url,
+                "error": result.error,
+            }
+
+        @app.post("/admin/api/suggest-page", include_in_schema=False)
+        async def suggest_admin_page(request: Request) -> dict[str, Any]:
+            require_admin(request)
+            if admin_suggest is None:
+                raise HTTPException(status_code=503, detail="Page suggestions are not configured")
+            body = await _read_json_object(request)
+            url = body.get("url")
+            if not isinstance(url, str) or not url:
+                raise HTTPException(status_code=422, detail="url is required")
+            host = urlsplit(url).hostname
+            if not host:
+                raise HTTPException(status_code=422, detail="url must include a host")
+            result = await admin_suggest(url, {host})
+            return {
+                "ok": result.ok,
+                "title": result.title,
+                "has_main": result.has_main,
                 "error": result.error,
             }
 
@@ -471,10 +504,16 @@ def create_app(
         @app.post("/checks/pages/{page_id}")
         async def check_page(page_id: str, request: Request) -> dict[str, Any]:
             _authenticate(request, webhook_token)
+            # manifest_store.registry reflects the latest saved manifest even
+            # when it was updated after this app was built; fall back to the
+            # snapshot only if there's no live store to read from.
+            current_registry = (
+                manifest_store.registry if manifest_store is not None else manifest_registry
+            )
             try:
-                page = manifest_registry.page(page_id)
-                allowed_hosts = set(manifest_registry.allowed_hosts(page_id))
-                site_id = manifest_registry.site_id(page_id)
+                page = current_registry.page(page_id)
+                allowed_hosts = set(current_registry.allowed_hosts(page_id))
+                site_id = current_registry.site_id(page_id)
             except KeyError as exc:
                 raise HTTPException(status_code=404, detail="Unknown page") from exc
 

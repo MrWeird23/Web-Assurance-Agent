@@ -52,6 +52,57 @@ class _LinkParser(HTMLParser):
             self.links.append(href)
 
 
+class _MetaParser(HTMLParser):
+    """Pulls the bits of a page an admin needs to guess at page config."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.title = ""
+        self.has_main = False
+        self._in_title = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        tag = tag.lower()
+        if tag == "title":
+            self._in_title = True
+        elif tag == "main":
+            self.has_main = True
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() == "title":
+            self._in_title = False
+
+    def handle_data(self, data: str) -> None:
+        if self._in_title:
+            self.title += data
+
+
+@dataclass(frozen=True, slots=True)
+class PageSuggestion:
+    ok: bool
+    title: str | None
+    has_main: bool
+    error: str | None
+
+
+async def suggest_page(
+    url: str,
+    *,
+    allowed_hosts: set[str],
+    fetch: Callable[[str, set[str]], Awaitable[CrawlFetchResult]],
+) -> PageSuggestion:
+    """Fetch `url` once and extract config hints (title, presence of <main>)."""
+    fetched = await fetch(url, allowed_hosts)
+    healthy = fetched.error is None and fetched.status_code is not None and 200 <= fetched.status_code < 400
+    if not healthy:
+        return PageSuggestion(ok=False, title=None, has_main=False, error=fetched.error or "Unreachable")
+    if not (fetched.content_type or "").lower().startswith("text/html"):
+        return PageSuggestion(ok=True, title=None, has_main=False, error=None)
+    parser = _MetaParser()
+    parser.feed(fetched.body.decode("utf-8", errors="replace"))
+    return PageSuggestion(ok=True, title=parser.title.strip() or None, has_main=parser.has_main, error=None)
+
+
 def normalize_crawl_url(url: str, *, allowed_hosts: set[str]) -> str | None:
     try:
         parsed = validate_probe_url(url, allowed_hosts=allowed_hosts)

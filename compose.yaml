@@ -20,9 +20,8 @@ services:
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
     volumes:
       - type: bind
-        source: ./config/sites.yaml
-        target: /app/config/sites.yaml
-        read_only: true
+        source: ./config
+        target: /app/config
         bind:
           create_host_path: false
       - type: bind

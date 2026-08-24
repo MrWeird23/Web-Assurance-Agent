@@ -133,6 +133,35 @@ async def test_admin_can_read_and_atomically_replace_manifest(tmp_path: Path) ->
     assert not list(tmp_path.glob("*.tmp"))
 
 
+async def test_admin_save_calls_reload_hook_and_skips_restart_notice(tmp_path: Path) -> None:
+    path = tmp_path / "sites.yaml"
+    path.write_text(MANIFEST, encoding="utf-8")
+    store = ManifestStore(path, permitted_hosts={"example.com"})
+    calls = []
+
+    async def reload_scheduler() -> None:
+        calls.append(1)
+
+    app = create_app(
+        engine=StubEngine(),
+        webhook_token="expected-secret",
+        manifest_store=store,
+        admin_reload_scheduler=reload_scheduler,
+    )
+    headers = {"Authorization": "Bearer expected-secret"}
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        saved = await client.put(
+            "/admin/api/manifest", headers=headers, json=_manifest_payload()
+        )
+
+    assert saved.status_code == 200
+    assert saved.json() == {"status": "saved", "restart_required": False}
+    assert calls == [1]
+
+
 async def test_admin_rejects_hosts_outside_runtime_allowlist_without_writing(
     tmp_path: Path,
 ) -> None:

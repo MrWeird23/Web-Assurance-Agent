@@ -46,12 +46,26 @@ class ManifestStore:
             for site in registry.manifest.sites
             for host in site.allowed_hosts
         }
-        unexpected = sorted(configured - self.permitted_hosts)
+        unexpected = sorted(host for host in configured if not self._is_permitted(host))
         if unexpected:
             raise ValueError(
                 "Site hosts must first be approved in TRIAGE_ALLOWED_HOSTS: "
                 + ", ".join(unexpected)
             )
+
+    def _is_permitted(self, host: str) -> bool:
+        # TRIAGE_ALLOWED_HOSTS may list "*.example.com" to approve example.com and
+        # every subdomain in one entry, so onboarding a new site under an already
+        # approved domain doesn't require an env edit + restart. A bare "*" opts
+        # out of this scope-control gate entirely (any public host may be added
+        # via the admin UI) -- private/internal targets stay blocked regardless,
+        # that check happens per-request in security.validate_resolved_addresses.
+        if "*" in self.permitted_hosts or host in self.permitted_hosts:
+            return True
+        return any(
+            pattern.startswith("*.") and (host == pattern[2:] or host.endswith(pattern[1:]))
+            for pattern in self.permitted_hosts
+        )
 
     def _atomic_write(self, content: str) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
