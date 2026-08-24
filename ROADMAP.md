@@ -509,9 +509,9 @@ Browser milestones must additionally prove in the built container that:
 
 **Status:** not started
 
-`pyproject.toml` and this codebase currently track pre-1.0 milestone versions (`0.6.0` after
-Milestone 6). Cutting `1.0.0` is a deliberate stability promise, not an automatic bump once the
-milestones above merge. It requires:
+`pyproject.toml` and this codebase currently track pre-1.0 milestone versions (`0.7.0`: admin
+console persistence/autofill/live-reload fixes on top of Milestone 6). Cutting `1.0.0` is a
+deliberate stability promise, not an automatic bump once the milestones above merge. It requires:
 
 - the Milestone 6 pilot actually run to completion against a real production site, with noise and
   accuracy reviewed and judged acceptable — not just the runbook and tooling existing;
@@ -521,11 +521,11 @@ milestones above merge. It requires:
 - a decision on the deferred Milestone 4 items (external secret-manager adapters/rotation,
   host-side WP-CLI collector) — either implemented, or explicitly declared out of scope for 1.0;
 - a declared stability contract for the manual check endpoint and webhook response schemas, since
-  both have gained fields every milestone through `0.6.0`;
-- `pyproject.toml` version brought in sync with the milestone actually shipped (it still read
-  `0.2.0` after Milestone 6 merged — see [README.md](README.md)).
+  both have gained fields every milestone through `0.7.0`;
+- `pyproject.toml` version brought in sync with the milestone actually shipped (it read `0.2.0`
+  after Milestone 6 merged, then `0.6.0`, before catching up here — see [README.md](README.md)).
 
-Until these close, use pre-1.0 versions (e.g. `0.7.0`) for further milestone work.
+Until these close, use pre-1.0 versions for further milestone work.
 
 ## Immediate implementation order
 

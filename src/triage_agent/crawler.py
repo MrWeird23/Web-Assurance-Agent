@@ -93,14 +93,19 @@ async def suggest_page(
 ) -> PageSuggestion:
     """Fetch `url` once and extract config hints (title, presence of <main>)."""
     fetched = await fetch(url, allowed_hosts)
-    healthy = fetched.error is None and fetched.status_code is not None and 200 <= fetched.status_code < 400
+    status = fetched.status_code
+    healthy = fetched.error is None and status is not None and 200 <= status < 400
     if not healthy:
-        return PageSuggestion(ok=False, title=None, has_main=False, error=fetched.error or "Unreachable")
+        return PageSuggestion(
+            ok=False, title=None, has_main=False, error=fetched.error or "Unreachable"
+        )
     if not (fetched.content_type or "").lower().startswith("text/html"):
         return PageSuggestion(ok=True, title=None, has_main=False, error=None)
     parser = _MetaParser()
     parser.feed(fetched.body.decode("utf-8", errors="replace"))
-    return PageSuggestion(ok=True, title=parser.title.strip() or None, has_main=parser.has_main, error=None)
+    return PageSuggestion(
+        ok=True, title=parser.title.strip() or None, has_main=parser.has_main, error=None
+    )
 
 
 def normalize_crawl_url(url: str, *, allowed_hosts: set[str]) -> str | None:
