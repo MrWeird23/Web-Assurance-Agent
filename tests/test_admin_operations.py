@@ -9,6 +9,7 @@ import httpx
 from PIL import Image
 
 from triage_agent.api import create_app
+from triage_agent.auth_store import UserStore
 from triage_agent.baselines import BaselineStore
 from triage_agent.browser_checks import BrowserEvidence, ScreenshotArtifact, Viewport
 from triage_agent.crawler import CrawlResult, PageSuggestion
@@ -98,6 +99,24 @@ def _store(tmp_path: Path) -> ManifestStore:
     return ManifestStore(path, permitted_hosts={"example.com"})
 
 
+ADMIN_USERNAME = "admin"
+ADMIN_PASSWORD = "correct-horse-battery-staple"
+
+
+def _user_store(tmp_path: Path) -> UserStore:
+    store = UserStore(tmp_path / "users.sqlite3")
+    store.create_user(ADMIN_USERNAME, ADMIN_PASSWORD)
+    return store
+
+
+async def _login_headers(client: httpx.AsyncClient) -> dict[str, str]:
+    response = await client.post(
+        "/admin/api/login", json={"username": ADMIN_USERNAME, "password": ADMIN_PASSWORD}
+    )
+    assert response.status_code == 200
+    return {"Authorization": f"Bearer {response.json()['token']}"}
+
+
 def test_wildcard_permitted_host_covers_apex_and_subdomains(tmp_path: Path) -> None:
     path = tmp_path / "sites.yaml"
     path.write_text(MANIFEST.replace("example.com", "sub.example.com"), encoding="utf-8")
@@ -145,14 +164,13 @@ async def test_admin_can_test_a_configured_link(tmp_path: Path) -> None:
         webhook_token="expected-secret",
         manifest_store=_store(tmp_path),
         admin_probe=probe,
+        user_store=_user_store(tmp_path),
     )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://testserver"
     ) as client:
-        response = await client.post(
-            "/admin/api/pages/home/test-link",
-            headers={"Authorization": "Bearer expected-secret"},
-        )
+        headers = await _login_headers(client)
+        response = await client.post("/admin/api/pages/home/test-link", headers=headers)
 
     assert response.status_code == 200
     assert response.json() == {
@@ -175,13 +193,15 @@ async def test_admin_can_suggest_page_config_from_a_url(tmp_path: Path) -> None:
         webhook_token="expected-secret",
         manifest_store=_store(tmp_path),
         admin_suggest=suggest,
+        user_store=_user_store(tmp_path),
     )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://testserver"
     ) as client:
+        headers = await _login_headers(client)
         response = await client.post(
             "/admin/api/suggest-page",
-            headers={"Authorization": "Bearer expected-secret"},
+            headers=headers,
             json={"url": "https://example.com/about"},
         )
 
@@ -203,15 +223,13 @@ async def test_admin_suggest_page_requires_a_url(tmp_path: Path) -> None:
         webhook_token="expected-secret",
         manifest_store=_store(tmp_path),
         admin_suggest=suggest,
+        user_store=_user_store(tmp_path),
     )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://testserver"
     ) as client:
-        response = await client.post(
-            "/admin/api/suggest-page",
-            headers={"Authorization": "Bearer expected-secret"},
-            json={},
-        )
+        headers = await _login_headers(client)
+        response = await client.post("/admin/api/suggest-page", headers=headers, json={})
 
     assert response.status_code == 422
 
@@ -222,14 +240,13 @@ async def test_admin_runs_page_tests_as_streamed_ndjson(tmp_path: Path) -> None:
         webhook_token="expected-secret",
         manifest_store=_store(tmp_path),
         page_checker=StubPageChecker(),
+        user_store=_user_store(tmp_path),
     )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://testserver"
     ) as client:
-        response = await client.post(
-            "/admin/api/pages/home/run-tests",
-            headers={"Authorization": "Bearer expected-secret"},
-        )
+        headers = await _login_headers(client)
+        response = await client.post("/admin/api/pages/home/run-tests", headers=headers)
 
     events = [json.loads(line) for line in response.text.splitlines()]
     assert response.status_code == 200
@@ -260,15 +277,14 @@ async def test_admin_runs_full_triage_for_every_configured_page(tmp_path: Path) 
         webhook_token="expected-secret",
         manifest_store=store,
         page_checker=checker,
+        user_store=_user_store(tmp_path),
     )
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://testserver"
     ) as client:
-        response = await client.post(
-            "/admin/api/run-full-triage",
-            headers={"Authorization": "Bearer expected-secret"},
-        )
+        headers = await _login_headers(client)
+        response = await client.post("/admin/api/run-full-triage", headers=headers)
 
     events = [json.loads(line) for line in response.text.splitlines()]
     assert response.status_code == 200
@@ -311,15 +327,14 @@ async def test_admin_full_triage_streams_enabled_site_crawl(tmp_path: Path) -> N
         manifest_store=store,
         page_checker=StubPageChecker(),
         site_crawler=StubSiteCrawler(),
+        user_store=_user_store(tmp_path),
     )
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://testserver"
     ) as client:
-        response = await client.post(
-            "/admin/api/run-full-triage",
-            headers={"Authorization": "Bearer expected-secret"},
-        )
+        headers = await _login_headers(client)
+        response = await client.post("/admin/api/run-full-triage", headers=headers)
 
     events = [json.loads(line) for line in response.text.splitlines()]
     crawl_events = [event for event in events if event["event"].startswith("crawl_")]
@@ -362,6 +377,7 @@ async def test_admin_full_triage_requires_authentication(tmp_path: Path) -> None
         webhook_token="expected-secret",
         manifest_store=_store(tmp_path),
         page_checker=StubPageChecker(),
+        user_store=_user_store(tmp_path),
     )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://testserver"
@@ -383,15 +399,14 @@ async def test_admin_test_run_honours_ignored_console_errors(tmp_path: Path) -> 
         webhook_token="expected-secret",
         manifest_store=store,
         page_checker=checker,
+        user_store=_user_store(tmp_path),
     )
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
-        response = await client.post(
-            "/admin/api/pages/home/run-tests",
-            headers={"Authorization": "Bearer expected-secret"},
-        )
+        headers = await _login_headers(client)
+        response = await client.post("/admin/api/pages/home/run-tests", headers=headers)
 
     events = [json.loads(line) for line in response.text.splitlines()]
     viewport = next(event for event in events if event["event"] == "viewport")
@@ -408,14 +423,16 @@ async def test_admin_uploads_and_approves_reference_screenshot(tmp_path: Path) -
         webhook_token="expected-secret",
         manifest_store=_store(tmp_path),
         baseline_store=baselines,
+        user_store=_user_store(tmp_path),
     )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://testserver"
     ) as client:
+        headers = await _login_headers(client)
         response = await client.put(
             "/admin/api/pages/home/baselines/desktop",
             headers={
-                "Authorization": "Bearer expected-secret",
+                **headers,
                 "Content-Type": "image/png",
                 "X-Operator-Label": "Rodrigo",
             },
@@ -463,11 +480,12 @@ async def test_admin_captures_previews_and_approves_reference_screenshot(
         manifest_store=_store(tmp_path),
         baseline_store=baselines,
         page_checker=CapturePageChecker(),
+        user_store=_user_store(tmp_path),
     )
-    headers = {"Authorization": "Bearer expected-secret"}
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://testserver"
     ) as client:
+        headers = await _login_headers(client)
         captured = await client.post(
             "/admin/api/pages/home/baselines/desktop/capture", headers=headers
         )

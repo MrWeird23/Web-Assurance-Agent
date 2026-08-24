@@ -162,11 +162,16 @@ When `TRIAGE_SITE_MANIFEST_PATH` points to a writable manifest, the service expo
 small management console at `/admin`.
 
 - Open `/admin` through the same trusted private network or reverse proxy
-  used for the webhook service. The application does not implement user login;
-  access control remains the responsibility of that boundary.
-- Enter the webhook token when prompted. The browser persists it in
-  `localStorage` (so it survives a page reload) and sends it as an
-  `Authorization: Bearer <token>` header for manifest reads and writes.
+  used for the webhook service.
+- Log in with a username and password created via the `manage_users` CLI (see
+  [Admin accounts](#admin-accounts) below). The browser persists the session
+  token in `localStorage` (so it survives a page reload) and sends it as an
+  `Authorization: Bearer <token>` header for manifest reads and writes. Sessions
+  expire after 12 hours or on **Log out**.
+- Login requires `TRIAGE_STATE_DATABASE_PATH` to be set (admin accounts are
+  stored in a SQLite file next to it); without it, `/admin` reports login as
+  unavailable. `TRIAGE_WEBHOOK_TOKEN` no longer grants admin-panel access --
+  it now only gates the Uptime Kuma webhook and the manual-check API.
 - Entering a page URL can auto-suggest required text/selectors from that page
   (via a safe, size-capped fetch of the page itself).
 - Changes are validated against the manifest schema and the process-level
@@ -182,6 +187,20 @@ small management console at `/admin`.
   tuning, concurrency limit, and log level controls -- see
   [Runtime settings (admin UI)](#runtime-settings-admin-ui) below. `TRIAGE_WEBHOOK_TOKEN` and
   `TRIAGE_ALLOWED_HOSTS` are deliberately not editable there.
+
+### Admin accounts
+
+There is no seeded default account. Create the first admin user with the
+`manage_users` CLI, run inside the running container (it prompts for the
+password interactively -- it never touches `.env` or shell history):
+
+```bash
+docker compose exec web-assurance-agent python -m triage_agent.manage_users create <username>
+```
+
+Other subcommands: `reset-password <username>`, `delete <username>`, and
+`list`. All of them require `TRIAGE_STATE_DATABASE_PATH` to be set, since
+that is where the accounts database lives.
 
 The starter pilot and ownership notes are recorded in
 [`docs/pilot-inventory.md`](docs/pilot-inventory.md). Browser assertions in
@@ -300,7 +319,7 @@ panel instead of editing `.env` and restarting -- see
 | `TRIAGE_BROWSER_ARTIFACT_DIRECTORY` | No | empty | Directory for optional browser screenshot artifacts |
 | `TRIAGE_VISUAL_BASELINE_DIRECTORY` | No | empty | Directory containing separately stored human-approved visual baselines |
 | `TRIAGE_MANUAL_CHECK_CONCURRENCY` | No | `1` | Maximum simultaneous manual browser checks per service process, from 1 to 4; excess requests receive HTTP 429 |
-| `TRIAGE_STATE_DATABASE_PATH` | No | empty | SQLite file for durable incident/publication state; unset keeps state in memory only (lost on restart, unsafe for multiple workers) |
+| `TRIAGE_STATE_DATABASE_PATH` | No | empty | SQLite file for durable incident/publication state; unset keeps state in memory only (lost on restart, unsafe for multiple workers). Also enables `/admin` login: admin accounts are stored in `users.sqlite3` next to this file |
 
 ### Runtime settings (admin UI)
 
@@ -324,8 +343,9 @@ not part of this file and cannot be changed here.
 ### Site configuration console
 
 When `TRIAGE_SITE_MANIFEST_PATH` is configured, open `/admin` to manage the
-site manifest through the built-in form. Enter the same secret configured in
-`TRIAGE_WEBHOOK_TOKEN`; the manifest API is not accessible without it.
+site manifest through the built-in form. Log in with an admin account (see
+[Admin accounts](#admin-accounts)); the manifest API is not accessible without
+a valid session.
 
 The console validates the complete manifest before replacing the YAML file and
 writes changes atomically. New hostnames remain fail-closed: add them to

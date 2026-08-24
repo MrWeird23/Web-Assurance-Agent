@@ -4,8 +4,26 @@ from pathlib import Path
 import httpx
 
 from triage_agent.api import create_app
+from triage_agent.auth_store import UserStore
 from triage_agent.manifest_store import ManifestStore
 from triage_agent.settings_store import RuntimeSettings, SettingsStore
+
+ADMIN_USERNAME = "admin"
+ADMIN_PASSWORD = "correct-horse-battery-staple"
+
+
+def _user_store(tmp_path: Path) -> UserStore:
+    store = UserStore(tmp_path / "users.sqlite3")
+    store.create_user(ADMIN_USERNAME, ADMIN_PASSWORD)
+    return store
+
+
+async def _login_headers(client: httpx.AsyncClient) -> dict[str, str]:
+    response = await client.post(
+        "/admin/api/login", json={"username": ADMIN_USERNAME, "password": ADMIN_PASSWORD}
+    )
+    assert response.status_code == 200
+    return {"Authorization": f"Bearer {response.json()['token']}"}
 
 MANIFEST = """\
 version: 1
@@ -86,6 +104,9 @@ async def test_admin_shell_is_available_without_exposing_manifest(tmp_path: Path
     assert "e.event==='crawl_start'" in response.text
     assert "e.event==='crawl_page'" in response.text
     assert "e.event==='crawl_result'" in response.text
+    assert 'id="loginBar"' in response.text
+    assert 'id="username"' in response.text
+    assert 'id="logout"' in response.text
     assert 'id="openSettings"' in response.text
     assert 'id="settingsModal"' in response.text
     assert 'id="discordWebhook"' in response.text
@@ -100,6 +121,7 @@ async def test_admin_manifest_api_requires_authentication(tmp_path: Path) -> Non
         engine=StubEngine(),
         webhook_token="expected-secret",
         manifest_store=ManifestStore(path, permitted_hosts={"example.com"}),
+        user_store=_user_store(tmp_path),
     )
 
     async with httpx.AsyncClient(
@@ -110,18 +132,80 @@ async def test_admin_manifest_api_requires_authentication(tmp_path: Path) -> Non
     assert response.status_code == 401
 
 
+async def test_admin_api_is_unavailable_without_a_user_store(tmp_path: Path) -> None:
+    path = tmp_path / "sites.yaml"
+    path.write_text(MANIFEST, encoding="utf-8")
+    app = create_app(
+        engine=StubEngine(),
+        webhook_token="expected-secret",
+        manifest_store=ManifestStore(path, permitted_hosts={"example.com"}),
+    )
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.get(
+            "/admin/api/manifest", headers={"Authorization": "Bearer expected-secret"}
+        )
+
+    assert response.status_code == 503
+
+
+async def test_admin_login_rejects_wrong_password(tmp_path: Path) -> None:
+    path = tmp_path / "sites.yaml"
+    path.write_text(MANIFEST, encoding="utf-8")
+    app = create_app(
+        engine=StubEngine(),
+        webhook_token="expected-secret",
+        manifest_store=ManifestStore(path, permitted_hosts={"example.com"}),
+        user_store=_user_store(tmp_path),
+    )
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.post(
+            "/admin/api/login", json={"username": ADMIN_USERNAME, "password": "wrong"}
+        )
+
+    assert response.status_code == 401
+
+
+async def test_admin_logout_revokes_the_session(tmp_path: Path) -> None:
+    path = tmp_path / "sites.yaml"
+    path.write_text(MANIFEST, encoding="utf-8")
+    app = create_app(
+        engine=StubEngine(),
+        webhook_token="expected-secret",
+        manifest_store=ManifestStore(path, permitted_hosts={"example.com"}),
+        user_store=_user_store(tmp_path),
+    )
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        headers = await _login_headers(client)
+        await client.post("/admin/api/logout", headers=headers)
+        response = await client.get("/admin/api/manifest", headers=headers)
+
+    assert response.status_code == 401
+
+
 async def test_admin_can_read_and_atomically_replace_manifest(tmp_path: Path) -> None:
     path = tmp_path / "sites.yaml"
     path.write_text(MANIFEST, encoding="utf-8")
     store = ManifestStore(path, permitted_hosts={"example.com"})
     app = create_app(
-        engine=StubEngine(), webhook_token="expected-secret", manifest_store=store
+        engine=StubEngine(),
+        webhook_token="expected-secret",
+        manifest_store=store,
+        user_store=_user_store(tmp_path),
     )
-    headers = {"Authorization": "Bearer expected-secret"}
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://testserver"
     ) as client:
+        headers = await _login_headers(client)
         before = await client.get("/admin/api/manifest", headers=headers)
         saved = await client.put(
             "/admin/api/manifest", headers=headers, json=_manifest_payload()
@@ -153,12 +237,13 @@ async def test_admin_save_calls_reload_hook_and_skips_restart_notice(tmp_path: P
         webhook_token="expected-secret",
         manifest_store=store,
         admin_reload_scheduler=reload_scheduler,
+        user_store=_user_store(tmp_path),
     )
-    headers = {"Authorization": "Bearer expected-secret"}
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://testserver"
     ) as client:
+        headers = await _login_headers(client)
         saved = await client.put(
             "/admin/api/manifest", headers=headers, json=_manifest_payload()
         )
@@ -178,14 +263,16 @@ async def test_admin_rejects_hosts_outside_runtime_allowlist_without_writing(
         engine=StubEngine(),
         webhook_token="expected-secret",
         manifest_store=ManifestStore(path, permitted_hosts={"example.com"}),
+        user_store=_user_store(tmp_path),
     )
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://testserver"
     ) as client:
+        headers = await _login_headers(client)
         response = await client.put(
             "/admin/api/manifest",
-            headers={"Authorization": "Bearer expected-secret"},
+            headers=headers,
             json=_manifest_payload(host="unapproved.example"),
         )
 
@@ -202,6 +289,7 @@ async def test_admin_settings_api_requires_authentication(tmp_path: Path) -> Non
         webhook_token="expected-secret",
         manifest_store=ManifestStore(path, permitted_hosts={"example.com"}),
         settings_store=SettingsStore(tmp_path / "settings.yaml", defaults=RuntimeSettings()),
+        user_store=_user_store(tmp_path),
     )
 
     async with httpx.AsyncClient(
@@ -221,12 +309,13 @@ async def test_admin_can_read_and_replace_settings(tmp_path: Path) -> None:
         webhook_token="expected-secret",
         manifest_store=ManifestStore(manifest_path, permitted_hosts={"example.com"}),
         settings_store=settings_store,
+        user_store=_user_store(tmp_path),
     )
-    headers = {"Authorization": "Bearer expected-secret"}
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://testserver"
     ) as client:
+        headers = await _login_headers(client)
         before = await client.get("/admin/api/settings", headers=headers)
         saved = await client.put(
             "/admin/api/settings",
@@ -264,12 +353,13 @@ async def test_admin_settings_save_calls_apply_hook_and_reports_its_restart_verd
         manifest_store=ManifestStore(manifest_path, permitted_hosts={"example.com"}),
         settings_store=settings_store,
         admin_apply_settings=apply_settings,
+        user_store=_user_store(tmp_path),
     )
-    headers = {"Authorization": "Bearer expected-secret"}
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://testserver"
     ) as client:
+        headers = await _login_headers(client)
         saved = await client.put(
             "/admin/api/settings", headers=headers, json={"confirmation_attempts": 3}
         )
@@ -290,14 +380,16 @@ async def test_admin_rejects_invalid_settings_without_writing(tmp_path: Path) ->
         webhook_token="expected-secret",
         manifest_store=ManifestStore(manifest_path, permitted_hosts={"example.com"}),
         settings_store=settings_store,
+        user_store=_user_store(tmp_path),
     )
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://testserver"
     ) as client:
+        headers = await _login_headers(client)
         response = await client.put(
             "/admin/api/settings",
-            headers={"Authorization": "Bearer expected-secret"},
+            headers=headers,
             json={"confirmation_attempts": 99},
         )
 
@@ -312,17 +404,17 @@ async def test_admin_rejects_oversized_payload_before_json_parsing(tmp_path: Pat
         engine=StubEngine(),
         webhook_token="expected-secret",
         manifest_store=ManifestStore(path, permitted_hosts={"example.com"}),
+        user_store=_user_store(tmp_path),
     )
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://testserver"
     ) as client:
+        headers = await _login_headers(client)
+        headers["Content-Type"] = "application/json"
         response = await client.put(
             "/admin/api/manifest",
-            headers={
-                "Authorization": "Bearer expected-secret",
-                "Content-Type": "application/json",
-            },
+            headers=headers,
             content=b"{" + b" " * 1_100_000,
         )
 

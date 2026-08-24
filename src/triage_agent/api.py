@@ -16,6 +16,7 @@ from PIL import Image, UnidentifiedImageError
 
 from triage_agent import __version__
 from triage_agent.admin_ui import ADMIN_HTML
+from triage_agent.auth_store import UserStore
 from triage_agent.baselines import BaselineStore
 from triage_agent.browser_checks import (
     BrowserEvidence,
@@ -29,6 +30,7 @@ from triage_agent.discord import DiscordPublishError
 from triage_agent.manifest_store import ManifestStore
 from triage_agent.manifests import ManifestRegistry, PageManifest, ViewportManifest
 from triage_agent.probes import ProbeResult
+from triage_agent.sessions import SessionStore
 from triage_agent.settings_store import RuntimeSettings, SettingsStore
 from triage_agent.wordpress_health import WordPressHealthResult
 from triage_agent.wordpress_reporting import (
@@ -97,6 +99,7 @@ def create_app(
     admin_reload_scheduler: AdminReload | None = None,
     settings_store: SettingsStore | None = None,
     admin_apply_settings: AdminApplySettings | None = None,
+    user_store: UserStore | None = None,
     baseline_store: BaselineStore | None = None,
     site_crawler: SiteCrawler | None = None,
 ) -> FastAPI:
@@ -123,12 +126,41 @@ def create_app(
 
     if manifest_store is not None:
 
-        def require_admin(request: Request) -> None:
-            authorization = request.headers.get("Authorization", "")
-            bearer = authorization[7:] if authorization.startswith("Bearer ") else ""
-            supplied = bearer or request.headers.get("X-Triage-Token", "")
-            if not supplied or not secrets.compare_digest(supplied, webhook_token):
-                raise HTTPException(status_code=401, detail="Invalid administrative token")
+        if user_store is not None:
+            session_store = SessionStore()
+
+            @app.post("/admin/api/login", include_in_schema=False)
+            async def admin_login(request: Request) -> dict[str, str]:
+                body = await _read_json_object(request)
+                username = body.get("username")
+                password = body.get("password")
+                if not isinstance(username, str) or not isinstance(password, str):
+                    raise HTTPException(
+                        status_code=422, detail="username and password are required"
+                    )
+                if not user_store.verify(username, password):
+                    raise HTTPException(status_code=401, detail="Invalid username or password")
+                return {"token": session_store.create(username), "username": username}
+
+            @app.post("/admin/api/logout", include_in_schema=False)
+            async def admin_logout(request: Request) -> dict[str, str]:
+                authorization = request.headers.get("Authorization", "")
+                bearer = authorization[7:] if authorization.startswith("Bearer ") else ""
+                if bearer:
+                    session_store.revoke(bearer)
+                return {"status": "logged_out"}
+
+            def require_admin(request: Request) -> None:
+                authorization = request.headers.get("Authorization", "")
+                bearer = authorization[7:] if authorization.startswith("Bearer ") else ""
+                if not bearer or session_store.lookup(bearer) is None:
+                    raise HTTPException(status_code=401, detail="Invalid or expired session")
+
+        else:
+
+            def require_admin(request: Request) -> None:
+                del request
+                raise HTTPException(status_code=503, detail="Admin login is not configured")
 
         @app.get("/admin/api/manifest", include_in_schema=False)
         async def read_admin_manifest(request: Request) -> dict[str, Any]:

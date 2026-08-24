@@ -12,6 +12,7 @@ import httpx
 from fastapi import FastAPI
 
 from triage_agent.api import PageChecker, WordPressHealthChecker, create_app, run_page_check
+from triage_agent.auth_store import UserStore
 from triage_agent.baselines import BaselineStore
 from triage_agent.browser_runner import PlaywrightBrowserRunner
 from triage_agent.classification import Incident, IncidentKind
@@ -61,6 +62,12 @@ def build_app(settings: Settings) -> FastAPI:
 
     def current_settings() -> RuntimeSettings:
         return settings_store.settings if settings_store is not None else env_settings
+
+    user_store: UserStore | None = (
+        UserStore(settings.users_database_path)
+        if settings.users_database_path is not None
+        else None
+    )
 
     logging.getLogger().setLevel(current_settings().log_level)
     client = httpx.AsyncClient(timeout=current_settings().request_timeout_seconds)
@@ -243,6 +250,8 @@ def build_app(settings: Settings) -> FastAPI:
                 await scheduler_task
         await client.aclose()
         registry.close()
+        if user_store is not None:
+            user_store.close()
 
     crawl_fetcher = SafeCrawlFetcher(client=client, resolver=resolve_addresses)
 
@@ -259,6 +268,7 @@ def build_app(settings: Settings) -> FastAPI:
         admin_reload_scheduler=reload_scheduler,
         settings_store=settings_store,
         admin_apply_settings=apply_settings if settings_store is not None else None,
+        user_store=user_store,
         admin_probe=lambda url, allowed_hosts: probe_url(
             url, allowed_hosts=allowed_hosts, client=client, resolver=resolve_addresses
         ),

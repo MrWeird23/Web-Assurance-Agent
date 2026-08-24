@@ -19,6 +19,7 @@ class Settings:
     scheduler_global_concurrency: int = 2
     scheduler_site_concurrency: int = 1
     settings_path: Path | None = None
+    users_database_path: Path | None = None
 
     @classmethod
     def from_mapping(cls, values: Mapping[str, str]) -> "Settings":
@@ -60,6 +61,13 @@ class Settings:
         # config/settings.yaml lives alongside sites.yaml -- same writable,
         # already-mounted directory, no extra env var or compose change needed.
         settings_path = Path(manifest_path).parent / "settings.yaml" if manifest_path else None
+        # Admin accounts live next to the durable incident state -- both are
+        # restart-durable data on the same already-mounted volume, no new
+        # env var or compose mount needed. No state DB configured means no
+        # durable place to keep accounts, so the login feature just stays off.
+        users_database_path = (
+            Path(state_database_path).parent / "users.sqlite3" if state_database_path else None
+        )
         return cls(
             webhook_token=token,
             allowed_hosts=hosts,
@@ -75,4 +83,5 @@ class Settings:
             scheduler_global_concurrency=scheduler_global_concurrency,
             scheduler_site_concurrency=scheduler_site_concurrency,
             settings_path=settings_path,
+            users_database_path=users_database_path,
         )

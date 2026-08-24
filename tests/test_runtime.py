@@ -4,6 +4,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from triage_agent.auth_store import UserStore
 from triage_agent.main import create_runtime_app
 from triage_agent.runtime import build_app
 from triage_agent.settings import Settings
@@ -79,6 +80,8 @@ async def test_runtime_applies_persisted_settings_yaml_over_env_defaults(
     (tmp_path / "settings.yaml").write_text(
         "confirmation_attempts: 4\nlog_level: WARNING\n", encoding="utf-8"
     )
+    users_database_path = tmp_path / "users.sqlite3"
+    UserStore(users_database_path).create_user("admin", "correct-horse-battery-staple")
     settings = Settings(
         webhook_token="a-secure-random-token",
         allowed_hosts=frozenset({"example.com"}),
@@ -90,6 +93,7 @@ async def test_runtime_applies_persisted_settings_yaml_over_env_defaults(
         browser_artifact_directory=tmp_path / "artifacts",
         visual_baseline_directory=tmp_path / "baselines",
         settings_path=tmp_path / "settings.yaml",
+        users_database_path=users_database_path,
     )
 
     app = build_app(settings)
@@ -97,8 +101,13 @@ async def test_runtime_applies_persisted_settings_yaml_over_env_defaults(
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://testserver"
     ) as client:
+        login = await client.post(
+            "/admin/api/login",
+            json={"username": "admin", "password": "correct-horse-battery-staple"},
+        )
+        token = login.json()["token"]
         response = await client.get(
-            "/admin/api/settings", headers={"Authorization": "Bearer a-secure-random-token"}
+            "/admin/api/settings", headers={"Authorization": f"Bearer {token}"}
         )
 
     assert response.json()["confirmation_attempts"] == 4
