@@ -40,6 +40,34 @@ async def test_crawler_discovers_same_site_links_with_bounded_depth() -> None:
     ]
 
 
+async def test_crawler_does_not_follow_links_to_an_allowed_sibling_host() -> None:
+    pages = {
+        "https://example.com/": CrawlFetchResult(
+            status_code=200,
+            final_url="https://example.com/",
+            content_type="text/html",
+            body=b'<a href="https://admin.example.com/">Admin</a>',
+            error=None,
+        ),
+    }
+
+    async def fetch(url: str, allowed_hosts: set[str]) -> CrawlFetchResult:
+        assert allowed_hosts == {"example.com", "admin.example.com"}
+        return pages[url]
+
+    crawler = SiteCrawler(fetch=fetch)
+    results = [
+        result
+        async for result in crawler.crawl(
+            start_url="https://example.com/",
+            allowed_hosts={"example.com", "admin.example.com"},
+            config=CrawlManifest(enabled=True, max_pages=10, max_depth=1),
+        )
+    ]
+
+    assert [result.url for result in results] == ["https://example.com/"]
+
+
 async def test_crawler_deduplicates_normalized_urls_and_excludes_paths() -> None:
     pages = {
         "https://example.com/": CrawlFetchResult(

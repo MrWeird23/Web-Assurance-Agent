@@ -85,6 +85,7 @@ class SiteCrawler:
         normalized_start = normalize_crawl_url(start_url, allowed_hosts=allowed_hosts)
         if normalized_start is None:
             return
+        crawl_host = (urlsplit(normalized_start).hostname or "").lower()
         queue = deque([(normalized_start, 0)])
         queued = {normalized_start}
         checked = 0
@@ -111,8 +112,11 @@ class SiteCrawler:
                 discovered = normalize_crawl_url(
                     urljoin(fetched.final_url, href), allowed_hosts=allowed_hosts
                 )
-                if discovered is None or discovered in queued or _excluded(
-                    discovered, config.exclude_paths
+                if (
+                    discovered is None
+                    or (urlsplit(discovered).hostname or "").lower() != crawl_host
+                    or discovered in queued
+                    or _excluded(discovered, config.exclude_paths)
                 ):
                     continue
                 queued.add(discovered)
