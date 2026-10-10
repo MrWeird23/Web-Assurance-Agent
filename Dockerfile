@@ -15,6 +15,8 @@ COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
 RUN uv sync --frozen --no-dev \
     && uv run --frozen --no-dev playwright install --with-deps chromium \
+    && mkdir -p /var/lib/triage/baselines /var/lib/triage/state \
+    && chown -R 10001:10001 /var/lib/triage \
     && chmod -R a+rX /ms-playwright \
     && rm -rf /var/lib/apt/lists/*
 

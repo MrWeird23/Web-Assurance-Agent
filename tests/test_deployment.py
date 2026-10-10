@@ -6,6 +6,8 @@ def test_container_installs_locked_playwright_chromium_for_non_root_runtime() ->
 
     assert "PLAYWRIGHT_BROWSERS_PATH=/ms-playwright" in dockerfile
     assert "uv run --frozen --no-dev playwright install --with-deps chromium" in dockerfile
+    assert "mkdir -p /var/lib/triage/baselines /var/lib/triage/state" in dockerfile
+    assert "chown -R 10001:10001 /var/lib/triage" in dockerfile
     assert "USER 10001:10001" in dockerfile
 
 
